@@ -1,0 +1,26 @@
+# Training outputs (adapters, checkpoints, logs)
+outputs/
+
+# Processed datasets (regenerable from data/raw via src/prepare_data.py)
+data/processed/
+
+# HuggingFace / torch caches
+.cache/
+*.bin
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env & secrets
+.env
+
+# Logs
+*.log
+
+# OS
+.DS_Store

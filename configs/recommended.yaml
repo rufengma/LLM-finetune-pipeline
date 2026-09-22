@@ -1,0 +1,25 @@
+# Reference configuration for a real (single-GPU) training run.
+# Equivalent CLI invocation:
+#   python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
+#       --num-epochs 3 --batch-size 2 --grad-accum 8 --lr 2e-4 --bf16 \
+#       --gradient-checkpointing --output-dir outputs/qwen2.5-1.5b-lora
+
+model_id: Qwen/Qwen2.5-1.5B-Instruct
+data_dir: data/processed
+output_dir: outputs/qwen2.5-1.5b-lora
+max_seq_length: 1024
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+# target_modules: null  # auto-detected per architecture; override if needed
+
+lr: 2.0e-4
+num_epochs: 3
+batch_size: 2
+grad_accum: 8
+warmup_ratio: 0.05
+seed: 42
+
+bf16: true            # Ampere+ GPUs; use fp16: true on older cards
+gradient_checkpointing: true

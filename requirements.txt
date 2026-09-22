@@ -1,0 +1,19 @@
+# Core training stack (CPU-compatible; for GPU, install the CUDA build of torch instead)
+# NOTE: on CPU-only machines install torch from the PyTorch CPU index first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# Tested working set (Sep 2026, Python 3.12, CPU):
+#   torch 2.13.0+cpu, transformers 5.17.0, peft 0.21.0, trl 1.13.0,
+#   datasets 5.0.1, accelerate 1.15.0, safetensors 0.8.0
+torch>=2.4.0
+
+transformers>=4.46.0
+peft>=0.13.0
+trl>=0.12.0
+datasets>=3.0.0
+accelerate>=0.34.0
+safetensors>=0.4.0
+
+# Optional: LLM-as-judge evaluation (OpenAI-compatible API)
+openai>=1.0.0
+python-dotenv>=1.0.0
