@@ -32,6 +32,7 @@ llm-finetune-pipeline/
 │   ├── common.py        # prompt template, seeding, LoRA target modules, tokenization
 │   ├── prepare_data.py  # JSONL → HuggingFace dataset with train/held-out split
 │   ├── train.py         # LoRA fine-tuning (peft + transformers Trainer)
+│   ├── train_dpo.py     # DPO preference-tuning follow-up (trl DPOTrainer)
 │   ├── evaluate.py      # base vs tuned: perplexity, samples, LLM-as-judge
 │   └── inference.py     # single-prompt / interactive generation CLI
 ├── configs/
@@ -66,6 +67,17 @@ python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
     --num-epochs 3 --batch-size 2 --grad-accum 8 --lr 2e-4 --bf16 \
     --gradient-checkpointing --output-dir outputs/qwen2.5-1.5b-lora
 
+# 3c. (Optional) DPO preference-tuning on top of the SFT adapter.
+#     --adapter-dir merges the SFT LoRA into the base weights first, then a
+#     fresh DPO LoRA is trained against a frozen reference policy.
+python src/train_dpo.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
+    --adapter-dir outputs/qwen2.5-1.5b-lora \
+    --build-from-sft --num-epochs 1 --batch-size 2 --grad-accum 4 \
+    --beta 0.1 --output-dir outputs/qwen2.5-1.5b-dpo
+# Or with your own preference pairs (JSONL: prompt / chosen / rejected):
+python src/train_dpo.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
+    --dpo-data data/preferences.jsonl --output-dir outputs/qwen2.5-1.5b-dpo
+
 # 4. Evaluate: held-out perplexity + side-by-side samples → eval/results.md
 python src/evaluate.py --model-id gpt2 --adapter-dir outputs/smoke-test
 
@@ -84,6 +96,20 @@ python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --inter
 - **Prompt format.** A simple Alpaca-style template (`### Instruction:` /
   `### Response:`) is used instead of model-specific chat templates, so the
   pipeline works with any causal LM, including GPT-2.
+- **Response-only loss.** Instruction tokens are masked with `-100`, so the
+  model learns to *produce* good responses rather than memorize instructions.
+  This is the standard practice for instruction tuning — and a common
+  interview question.
+- **DPO follow-up** (`src/train_dpo.py`). After SFT, Direct Preference
+  Optimization trains the model to prefer *chosen* over *rejected* responses
+  relative to a frozen reference policy, with a KL penalty (`--beta`,
+  default 0.1) keeping it close to the reference. The SFT LoRA is merged into
+  the base weights first; a fresh DPO LoRA is then trained on top. Preference
+  triples can come from a JSONL file (`--dpo-data`, columns `prompt` /
+  `chosen` / `rejected`) or be derived from the SFT set for smoke tests
+  (`--build-from-sft`: true response = chosen, a response to a *different*
+  instruction = rejected). Note the DPO learning rate default (5e-5) is
+  lower than SFT's (2e-4) — DPO is more sensitive to large updates.
 - **Response-only loss.** Instruction tokens are masked with `-100`, so the
   model learns to *produce* good responses rather than memorize instructions.
   This is the standard practice for instruction tuning — and a common
