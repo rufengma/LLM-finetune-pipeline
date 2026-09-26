@@ -17,3 +17,8 @@ safetensors>=0.4.0
 # Optional: LLM-as-judge evaluation (OpenAI-compatible API)
 openai>=1.0.0
 python-dotenv>=1.0.0
+
+# Optional: 4-bit QLoRA / 8-bit quantization for training (GPU only)
+# bitsandbytes is imported lazily by src/train.py, so it is not required
+# unless you pass --load-in-4bit or --load-in-8bit.
+bitsandbytes>=0.43.0

@@ -67,6 +67,12 @@ python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
     --num-epochs 3 --batch-size 2 --grad-accum 8 --lr 2e-4 --bf16 \
     --gradient-checkpointing --output-dir outputs/qwen2.5-1.5b-lora
 
+# 3b'. QLoRA run (4-bit NF4 + double quantization, fits a 1.5B model in ~8GB
+#      VRAM; needs bitsandbytes installed)
+python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
+    --load-in-4bit --bf16 --num-epochs 3 --batch-size 2 --grad-accum 8 \
+    --lr 2e-4 --gradient-checkpointing --output-dir outputs/qwen2.5-1.5b-qlora
+
 # 3c. (Optional) DPO preference-tuning on top of the SFT adapter.
 #     --adapter-dir merges the SFT LoRA into the base weights first, then a
 #     fresh DPO LoRA is trained against a frozen reference policy.
@@ -121,6 +127,14 @@ python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --inter
   response-only masking.
 - **LoRA targets** are auto-detected per architecture (see `default_target_modules`
   in `src/common.py`); override with `--target-modules` if needed.
+- **QLoRA / quantization.** `--load-in-4bit` loads the base model in 4-bit
+  NF4 (with nested/double quantization, `--bnb-4bit-double-quant` on by
+  default) via bitsandbytes, then trains LoRA adapters on the frozen
+  4-bit weights — roughly 4× less VRAM than full-precision LoRA, so a
+  1.5B-parameter model fits in ~8GB. Compute dtype follows `--bf16` /
+  `--fp16` (defaults to bf16). `--load-in-8bit` keeps the older 8-bit path;
+  the two flags are mutually exclusive. Both require a CUDA GPU — on CPU the
+  script warns and falls back to full precision so smoke tests still run.
 
 ## LoRA hyperparameters
 

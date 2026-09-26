@@ -12,6 +12,11 @@ Recommended real run (single GPU, ~16GB VRAM):
     python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \\
         --num-epochs 3 --batch-size 2 --grad-accum 8 --lr 2e-4 --bf16 \\
         --output-dir outputs/qwen2.5-1.5b-lora
+
+QLoRA run (single GPU, fits in ~8GB VRAM via 4-bit NF4 quantization):
+    python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \\
+        --load-in-4bit --bf16 --num-epochs 3 --batch-size 2 --grad-accum 8 \\
+        --lr 2e-4 --output-dir outputs/qwen2.5-1.5b-qlora
 """
 
 import argparse
@@ -60,7 +65,50 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device-map", default="auto")
     p.add_argument("--load-in-8bit", action="store_true",
                    help="8-bit quantization (GPU only, needs bitsandbytes)")
+    p.add_argument("--load-in-4bit", action="store_true",
+                   help="4-bit QLoRA quantization: NF4 + double quantization "
+                        "(GPU only, needs bitsandbytes). Mutually exclusive "
+                        "with --load-in-8bit.")
+    p.add_argument("--bnb-4bit-quant-type", default="nf4", choices=["nf4", "fp4"],
+                   help="4-bit quantization data type (default: nf4)")
+    p.add_argument("--bnb-4bit-double-quant", action="store_true", default=True,
+                   help="Use nested (double) quantization for 4-bit "
+                        "(default: on; pass --no-bnb-4bit-double-quant to disable)")
+    p.add_argument("--no-bnb-4bit-double-quant", action="store_false",
+                   dest="bnb_4bit_double_quant",
+                   help="Disable nested quantization for 4-bit")
     return p.parse_args()
+
+
+def build_quantization_config(args):
+    """Return (quantization_config, needs_kbit_training_prep) or (None, False).
+
+    4-bit and 8-bit are mutually exclusive; bitsandbytes is imported lazily so
+    the base requirements stay CPU-friendly without it installed.
+    """
+    if args.load_in_4bit and args.load_in_8bit:
+        raise SystemExit("error: --load-in-4bit and --load-in-8bit are mutually "
+                         "exclusive; pick one.")
+    if not (args.load_in_4bit or args.load_in_8bit):
+        return None, False
+    try:
+        from transformers import BitsAndBytesConfig
+    except ImportError:
+        raise SystemExit(
+            "error: quantization requested but bitsandbytes is not installed. "
+            "Install it with: pip install bitsandbytes")
+    if args.load_in_4bit:
+        compute_dtype = (torch.bfloat16 if args.bf16
+                         else torch.float16 if args.fp16 else torch.bfloat16)
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+            bnb_4bit_use_double_quant=args.bnb_4bit_double_quant,
+            bnb_4bit_compute_dtype=compute_dtype,
+        )
+    else:
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+    return quantization_config, True
 
 
 def main() -> None:
@@ -74,14 +122,22 @@ def main() -> None:
     tokenizer.padding_side = "right"
 
     dtype = torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32)
+    quantization_config, prep_for_kbit = build_quantization_config(args)
     model_kwargs = {"trust_remote_code": True, "dtype": dtype}
     if torch.cuda.is_available():
         model_kwargs["device_map"] = args.device_map
-        if args.load_in_8bit:
-            model_kwargs["load_in_8bit"] = True
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+    elif quantization_config is not None:
+        # bitsandbytes k-bit kernels are CUDA-only; fall back to full precision
+        # on CPU so smoke tests and CPU dev runs still work.
+        print("WARNING: bitsandbytes quantization requires a CUDA GPU; "
+              "running on CPU, ignoring the quantization flag and training "
+              "in full precision.")
+        quantization_config, prep_for_kbit = None, False
     # On CPU, device_map is left unset so Trainer handles placement.
     model = AutoModelForCausalLM.from_pretrained(args.model_id, **model_kwargs)
-    if args.load_in_8bit:
+    if prep_for_kbit:
         model = prepare_model_for_kbit_training(model)
     model.config.use_cache = False  # required for gradient checkpointing
 
