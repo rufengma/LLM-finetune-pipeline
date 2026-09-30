@@ -14,6 +14,9 @@ datasets>=3.0.0
 accelerate>=0.34.0
 safetensors>=0.4.0
 
+# Config files: only needed for the --config YAML flag in src/train.py
+pyyaml>=6.0.0
+
 # Optional: LLM-as-judge evaluation (OpenAI-compatible API)
 openai>=1.0.0
 python-dotenv>=1.0.0

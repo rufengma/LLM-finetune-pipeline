@@ -37,6 +37,16 @@ from common import (default_target_modules, ensure_pad_token, make_collate_fn,  
 
 
 def parse_args() -> argparse.Namespace:
+    # Two-pass parsing: `--config configs/foo.yaml` supplies defaults, so the
+    # YAML examples under configs/ are real and runnable; any explicit CLI
+    # flag still overrides the file (e.g. `--config configs/lr_sweep.yaml
+    # --lr 1e-5 --output-dir outputs/lr-sweep-1e-5`).
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=None,
+                     help="YAML config file with training args; explicit CLI "
+                          "flags override values from the file")
+    config_ns, _ = pre.parse_known_args()
+
     p = argparse.ArgumentParser(description="LoRA fine-tune a causal LM")
     # Model / data
     p.add_argument("--model-id", default="Qwen/Qwen2.5-1.5B-Instruct")
@@ -77,6 +87,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-bnb-4bit-double-quant", action="store_false",
                    dest="bnb_4bit_double_quant",
                    help="Disable nested quantization for 4-bit")
+
+    if config_ns.config:
+        path = Path(config_ns.config)
+        if not path.exists():
+            raise SystemExit(f"error: config file not found: {path}")
+        try:
+            import yaml
+        except ImportError:
+            raise SystemExit("error: --config requires PyYAML "
+                             "(pip install pyyaml)")
+        with open(path) as f:
+            cfg = yaml.safe_load(f) or {}
+        known = {a.dest for a in p._actions}
+        unknown = [k for k in cfg if k not in known]
+        if unknown:
+            raise SystemExit(f"error: unknown keys in {path}: {unknown} "
+                             f"(valid keys: {sorted(known)})")
+        p.set_defaults(**{k: v for k, v in cfg.items() if v is not None})
+    p.add_argument("--config", default=None,
+                   help="YAML config file with training args (e.g. "
+                        "--config configs/recommended.yaml); explicit CLI "
+                        "flags override values from the file")
     return p.parse_args()
 
 

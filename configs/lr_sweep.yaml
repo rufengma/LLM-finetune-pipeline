@@ -1,0 +1,44 @@
+# Learning-rate sweep recipe for a real (single-GPU) training run.
+#
+# One YAML can't express a sweep, so this file is the shared base config and
+# each sweep leg overrides --lr and --output-dir from the CLI (the --config
+# flag in src/train.py applies YAML values as defaults, so explicit flags
+# always win):
+#
+#   for lr in 1e-5 5e-5 1e-4 2e-4; do
+#     python src/train.py --config configs/lr_sweep.yaml \
+#         --lr "$lr" --output-dir "outputs/lr-sweep-$lr"
+#   done
+#
+# Then compare the legs on the held-out set, e.g.:
+#
+#   for d in outputs/lr-sweep-*/; do
+#     python src/evaluate.py --adapter-dir "$d" --output-dir "eval/lr-sweep-$(basename "$d")"
+#   done
+#
+# Suggested grid (log-spaced, covers the useful range for LoRA on 1B-scale
+# models): 1e-5, 5e-5, 1e-4, 2e-4. Start from the middle (5e-5); if training
+# loss plateaus high, move up; if it diverges or eval perplexity spikes,
+# move down. Keep the seed fixed so differences are attributable to lr.
+#
+# All values below match configs/recommended.yaml (single 16GB GPU).
+
+model_id: Qwen/Qwen2.5-1.5B-Instruct
+data_dir: data/processed
+output_dir: outputs/lr-sweep        # placeholder: override per leg as above
+max_seq_length: 1024
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+# target_modules: null  # auto-detected per architecture; override if needed
+
+lr: 5.0e-5            # sweep midpoint; each leg overrides this on the CLI
+num_epochs: 3
+batch_size: 2
+grad_accum: 8
+warmup_ratio: 0.05
+seed: 42
+
+bf16: true            # Ampere+ GPUs; use fp16: true on older cards
+gradient_checkpointing: true
