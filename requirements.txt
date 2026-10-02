@@ -25,3 +25,6 @@ python-dotenv>=1.0.0
 # bitsandbytes is imported lazily by src/train.py, so it is not required
 # unless you pass --load-in-4bit or --load-in-8bit.
 bitsandbytes>=0.43.0
+
+# Dev / tests
+pytest>=8.0.0  # run the suite with: pytest tests/ -q
