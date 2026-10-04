@@ -88,7 +88,10 @@ def parse_args() -> argparse.Namespace:
     # Hardware
     p.add_argument("--bf16", action="store_true")
     p.add_argument("--fp16", action="store_true")
-    p.add_argument("--gradient-checkpointing", action="store_true")
+    p.add_argument("--gradient-checkpointing", action="store_true",
+                   help="Trade ~20-30% extra compute for much lower activation "
+                        "memory (recompute activations in backprop); use for "
+                        "long sequences or larger models on limited VRAM")
     p.add_argument("--device-map", default="auto")
     p.add_argument("--load-in-8bit", action="store_true")
     return p.parse_args()

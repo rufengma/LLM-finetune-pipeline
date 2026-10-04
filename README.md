@@ -126,6 +126,19 @@ python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --inter
   transformers ≥ 5 it no longer pads a precomputed `labels` field and
   overwrites it with `input_ids` when `mlm=False`, silently destroying
   response-only masking.
+- **Gradient checkpointing.** `--gradient-checkpointing` (in both
+  `src/train.py` and `src/train_dpo.py`) trades compute for memory: instead of
+  keeping every layer's activations from the forward pass, they are recomputed
+  during backprop, so activation memory grows roughly with the square root of
+  the depth rather than linearly — at the cost of ~20–30% extra training time.
+  Use it when *activations* (not the base weights) are what blow the VRAM
+  budget: long `--max-seq-length` (default 1024), larger batch sizes, or
+  models ≥ 1.5B on a 16GB card. It stacks with `--bf16` and `--load-in-4bit`.
+  It is incompatible with the transformer's KV cache, which is why both scripts
+  set `model.config.use_cache = False` unconditionally — the cache is only
+  useful at inference time, never during training. `configs/recommended.yaml`
+  already enables it (`gradient_checkpointing: true`), and the real-run
+  quickstart commands pass the flag explicitly.
 - **LoRA targets** are auto-detected per architecture (see `default_target_modules`
   in `src/common.py`); override with `--target-modules` if needed.
 - **QLoRA / quantization.** `--load-in-4bit` loads the base model in 4-bit
