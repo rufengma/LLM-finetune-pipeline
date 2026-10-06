@@ -230,4 +230,4 @@ longer run.
 
 ## License
 
-MIT
+MIT License — see [LICENSE](LICENSE) (Copyright 2026 Rufeng Ma).
