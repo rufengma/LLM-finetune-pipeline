@@ -62,6 +62,33 @@ def ensure_pad_token(tokenizer):
     return tokenizer
 
 
+def maybe_init_wandb(args) -> bool:
+    """Initialize Weights & Biases run tracking when ``--wandb-project`` is set.
+
+    Returns True when W&B logging is active, in which case callers should
+    pass ``report_to=["wandb"]`` to ``TrainingArguments``/``DPOConfig`` (which
+    logs train loss, LR, etc. via the transformers W&B integration). Returns
+    False when the flag is absent, and nothing is logged anywhere.
+
+    wandb is imported lazily so it stays an optional dependency -- it is only
+    required when the flag is used.
+    """
+    project = getattr(args, "wandb_project", None)
+    if not project:
+        return False
+    try:
+        import wandb
+    except ImportError:
+        raise SystemExit(
+            "error: --wandb-project requires the wandb package "
+            "(pip install wandb)")
+    wandb.init(project=project,
+               name=getattr(args, "wandb_run_name", None) or None,
+               entity=getattr(args, "wandb_entity", None) or None,
+               config=dict(vars(args)))
+    return True
+
+
 def make_collate_fn(tokenizer):
     """Batch collator that pads input_ids / attention_mask / labels.
 

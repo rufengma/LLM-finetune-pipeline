@@ -228,6 +228,26 @@ Then compare the legs on the held-out set with `src/evaluate.py
 --adapter-dir <leg>` and pick the LR with the lowest perplexity before any
 longer run.
 
+## Weights & Biases logging (optional)
+
+Both `train.py` and `train_dpo.py` support optional W&B run tracking --
+pass `--wandb-project <project>` and train loss, LR, and the full run config
+are logged to that project (via the transformers W&B integration); the
+config dict from `training_config.json` / `dpo_config.json` is also attached
+to the run:
+
+```bash
+pip install wandb   # only needed if you use --wandb-project
+python src/train.py --config configs/recommended.yaml \
+    --wandb-project llm-finetune --wandb-run-name qwen2.5-lr-2e-4
+python src/train_dpo.py --build-from-sft --adapter-dir outputs/sft \
+    --wandb-project llm-finetune --wandb-run-name dpo-beta-0.1
+```
+
+Without the flag (the default), nothing is logged anywhere -- `report_to`
+stays `"none"`. The `wandb` package is imported lazily, so runs without the
+flag don't need it installed.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) (Copyright 2026 Rufeng Ma).

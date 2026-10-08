@@ -33,7 +33,7 @@ from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (default_target_modules, ensure_pad_token, make_collate_fn,  # noqa: E402
-                    make_tokenize_fn, set_seed)
+                    make_tokenize_fn, maybe_init_wandb, set_seed)
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +90,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-bnb-4bit-double-quant", action="store_false",
                    dest="bnb_4bit_double_quant",
                    help="Disable nested quantization for 4-bit")
+    # Logging
+    p.add_argument("--wandb-project", default=None,
+                   help="Weights & Biases project name; enables W&B logging "
+                        "of train loss / LR / config (requires pip install wandb)")
+    p.add_argument("--wandb-run-name", default=None,
+                   help="W&B run name (default: auto-generated)")
+    p.add_argument("--wandb-entity", default=None,
+                   help="W&B entity / team (default: your default entity)")
 
     if config_ns.config:
         path = Path(config_ns.config)
@@ -197,6 +205,9 @@ def main() -> None:
           f"(seq length <= {args.max_seq_length})")
 
     # --- Training ---
+    # W&B init is opt-in: with no --wandb-project this returns False and
+    # nothing is logged anywhere.
+    wandb_active = maybe_init_wandb(args)
     # transformers>=5 removed `warmup_ratio`; convert the ratio to steps here.
     if args.max_steps > 0:
         total_steps = args.max_steps
@@ -223,7 +234,7 @@ def main() -> None:
         bf16=args.bf16,
         fp16=args.fp16,
         gradient_checkpointing=args.gradient_checkpointing,
-        report_to="none",
+        report_to=["wandb"] if wandb_active else "none",
         remove_unused_columns=False,
     )
     trainer = Trainer(

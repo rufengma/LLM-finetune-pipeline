@@ -26,5 +26,10 @@ python-dotenv>=1.0.0
 # unless you pass --load-in-4bit or --load-in-8bit.
 bitsandbytes>=0.43.0
 
+# Optional: Weights & Biases experiment tracking (src/train.py,
+# src/train_dpo.py). wandb is imported lazily, so it is not required unless
+# you pass --wandb-project.
+wandb>=0.17.0
+
 # Dev / tests
 pytest>=8.0.0  # run the suite with: pytest tests/ -q

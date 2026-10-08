@@ -9,7 +9,10 @@ Run with:  pytest tests/ -q
 """
 
 import sys
+from argparse import Namespace
 from unittest.mock import MagicMock
+
+import pytest
 
 # Stub heavy training deps before importing src.common. Only the pure helper
 # functions are exercised here; tokenizer-dependent helpers (make_collate_fn,
@@ -23,6 +26,7 @@ from src.common import (  # noqa: E402
     build_prompt,
     default_target_modules,
     format_full_text,
+    maybe_init_wandb,
 )
 
 
@@ -109,3 +113,56 @@ class TestDefaultTargetModules:
 
     def test_unknown_model_falls_back_to_q_v_proj(self):
         assert default_target_modules("bert-base-uncased") == ["q_proj", "v_proj"]
+
+
+class TestMaybeInitWandb:
+    def _no_wandb(self, monkeypatch):
+        """Remove wandb from sys.modules and make `import wandb` fail.
+
+        sys.modules["wandb"] = None makes the import raise ImportError
+        deterministically, whether or not wandb is installed in the env.
+        """
+        monkeypatch.setitem(sys.modules, "wandb", None)
+
+    def test_no_project_returns_false_without_importing_wandb(self, monkeypatch):
+        self._no_wandb(monkeypatch)
+        args = Namespace(wandb_project=None, wandb_run_name=None, wandb_entity=None)
+        assert maybe_init_wandb(args) is False
+        # import was never attempted: the None sentinel stays untouched
+        assert sys.modules["wandb"] is None
+
+    def test_missing_project_attr_also_returns_false(self, monkeypatch):
+        self._no_wandb(monkeypatch)
+        assert maybe_init_wandb(Namespace()) is False
+
+    def test_project_without_wandb_installed_exits_with_hint(self, monkeypatch):
+        self._no_wandb(monkeypatch)
+        args = Namespace(wandb_project="llm-finetune", wandb_run_name=None,
+                         wandb_entity=None)
+        with pytest.raises(SystemExit) as exc:
+            maybe_init_wandb(args)
+        assert "pip install wandb" in str(exc.value)
+
+    def test_project_inits_run_and_returns_true(self, monkeypatch):
+        fake = MagicMock()
+        monkeypatch.setitem(sys.modules, "wandb", fake)
+        args = Namespace(wandb_project="llm-finetune", wandb_run_name="r1",
+                         wandb_entity="team", model_id="gpt2", lr=1e-4)
+        assert maybe_init_wandb(args) is True
+        fake.init.assert_called_once()
+        _, kwargs = fake.init.call_args
+        assert kwargs["project"] == "llm-finetune"
+        assert kwargs["name"] == "r1"
+        assert kwargs["entity"] == "team"
+        assert kwargs["config"]["model_id"] == "gpt2"
+        assert kwargs["config"]["lr"] == 1e-4
+
+    def test_defaults_become_none_when_run_name_entity_unset(self, monkeypatch):
+        fake = MagicMock()
+        monkeypatch.setitem(sys.modules, "wandb", fake)
+        args = Namespace(wandb_project="llm-finetune", wandb_run_name=None,
+                         wandb_entity=None, model_id="gpt2", lr=2e-4)
+        assert maybe_init_wandb(args) is True
+        _, kwargs = fake.init.call_args
+        assert kwargs["name"] is None
+        assert kwargs["entity"] is None
