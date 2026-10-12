@@ -156,6 +156,14 @@ python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --inter
   quickstart commands pass the flag explicitly.
 - **LoRA targets** are auto-detected per architecture (see `default_target_modules`
   in `src/common.py`); override with `--target-modules` if needed.
+- **NEFTune.** `--neftune-noise-alpha 5.0` adds small uniform noise to the
+  input embeddings during training (only the SFT script `src/train.py`;
+  DPO training keeps embeddings frozen via the reference model, so the
+  option isn't wired there). It's a cheap, architecture-free regularizer:
+  on small instruction datasets it typically adds a point or two of
+  generalization for zero extra compute. Try it when you see training
+  loss drop while held-out perplexity stalls; start with `5.0` (the value
+  from the paper), raise to `10–15` for very small sets.
 - **QLoRA / quantization.** `--load-in-4bit` loads the base model in 4-bit
   NF4 (with nested/double quantization, `--bnb-4bit-double-quant` on by
   default) via bitsandbytes, then trains LoRA adapters on the frozen

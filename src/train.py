@@ -59,6 +59,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora-dropout", type=float, default=0.05)
     p.add_argument("--target-modules", nargs="*", default=None,
                    help="Override auto-detected LoRA target modules")
+    # Regularization
+    p.add_argument("--neftune-noise-alpha", type=float, default=None,
+                   help="NEFTune embedding noise: if set (e.g. 5.0), add uniform "
+                        "noise scaled by alpha / sqrt(seq_len * hidden_dim) to the "
+                        "input embeddings during training. Cheap regularization "
+                        "that often helps small instruction-tuning sets "
+                        "generalize; the original paper used alpha=5.")
     # Optimization
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--num-epochs", type=float, default=3)
@@ -234,6 +241,7 @@ def main() -> None:
         bf16=args.bf16,
         fp16=args.fp16,
         gradient_checkpointing=args.gradient_checkpointing,
+        neftune_noise_alpha=args.neftune_noise_alpha,
         report_to=["wandb"] if wandb_active else "none",
         remove_unused_columns=False,
     )
