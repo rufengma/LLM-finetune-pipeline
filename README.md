@@ -164,6 +164,17 @@ python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --inter
   generalization for zero extra compute. Try it when you see training
   loss drop while held-out perplexity stalls; start with `5.0` (the value
   from the paper), raise to `10–15` for very small sets.
+- **Early stopping.** `--early-stopping-patience N` (only in `src/train.py`)
+  evaluates on the held-out split written by `src/prepare_data.py`
+  (`data/processed/test`, 12 examples; override with `--eval-split`) every
+  `max_steps // 5` steps (or `--eval-steps`) for `--max-steps` runs, or once
+  per epoch for `--num-epochs` runs. Training stops after N evaluation
+  rounds without improvement in eval loss, and the best checkpoint is
+  restored (`load_best_model_at_end`, `metric_for_best_model="eval_loss"`).
+  Save cadence is aligned with eval cadence so every evaluation has a
+  checkpoint to fall back to. Use it when training loss keeps dropping but
+  you suspect memorization; on tiny held-out sets a patience of 2–3 is
+  usually enough since eval noise is high.
 - **QLoRA / quantization.** `--load-in-4bit` loads the base model in 4-bit
   NF4 (with nested/double quantization, `--bnb-4bit-double-quant` on by
   default) via bitsandbytes, then trains LoRA adapters on the frozen

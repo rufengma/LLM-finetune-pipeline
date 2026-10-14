@@ -28,8 +28,8 @@ from pathlib import Path
 import torch
 from datasets import load_from_disk
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,
-                          TrainingArguments)
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          EarlyStoppingCallback, Trainer, TrainingArguments)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (default_target_modules, ensure_pad_token, make_collate_fn,  # noqa: E402
@@ -66,6 +66,21 @@ def parse_args() -> argparse.Namespace:
                         "input embeddings during training. Cheap regularization "
                         "that often helps small instruction-tuning sets "
                         "generalize; the original paper used alpha=5.")
+    # Evaluation / early stopping
+    p.add_argument("--early-stopping-patience", type=int, default=None,
+                   help="Enable early stopping on the held-out split: stop "
+                        "training after this many evaluation rounds without "
+                        "improvement in eval loss, and keep the best "
+                        "checkpoint (eval loss, load_best_model_at_end). "
+                        "Omit to disable (default).")
+    p.add_argument("--eval-split", default="test",
+                   help="Split under --data-dir used for evaluation when "
+                        "early stopping is enabled (default: test, written "
+                        "by src/prepare_data.py)")
+    p.add_argument("--eval-steps", type=int, default=None,
+                   help="Evaluate every N steps when training with "
+                        "--max-steps (default: max_steps // 5). With "
+                        "--num-epochs, evaluation happens once per epoch.")
     # Optimization
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--num-epochs", type=float, default=3)
@@ -161,6 +176,30 @@ def build_quantization_config(args):
     return quantization_config, True
 
 
+def build_eval_kwargs(args) -> dict:
+    """Extra TrainingArguments kwargs for eval + early stopping.
+
+    Pure function of the parsed args (no model/data I/O), so it is easy to
+    unit-test without the heavy training stack. Returns {} when early
+    stopping is disabled.
+    """
+    if not args.early_stopping_patience:
+        return {}
+    if args.max_steps > 0:
+        eval_strategy = "steps"
+        eval_steps = args.eval_steps or max(1, args.max_steps // 5)
+    else:
+        eval_strategy = "epoch"
+        eval_steps = None
+    return {
+        "eval_strategy": eval_strategy,
+        "eval_steps": eval_steps,
+        "load_best_model_at_end": True,
+        "metric_for_best_model": "eval_loss",
+        "greater_is_better": False,
+    }
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
@@ -211,6 +250,24 @@ def main() -> None:
     print(f"Tokenized {len(train_ds)} training examples "
           f"(seq length <= {args.max_seq_length})")
 
+    # --- Optional eval set for early stopping ---
+    eval_ds = None
+    eval_kwargs = build_eval_kwargs(args)
+    if eval_kwargs:
+        if args.early_stopping_patience < 1:
+            raise SystemExit("error: --early-stopping-patience must be >= 1")
+        eval_path = Path(args.data_dir) / args.eval_split
+        if not eval_path.exists():
+            raise SystemExit(f"error: eval split not found: {eval_path} "
+                             f"(run src/prepare_data.py, or set --eval-split)")
+        eval_ds = load_from_disk(str(eval_path))
+        eval_ds = eval_ds.map(make_tokenize_fn(tokenizer, args.max_seq_length),
+                              remove_columns=eval_ds.column_names)
+        print(f"Tokenized {len(eval_ds)} held-out examples from "
+              f"{args.data_dir}/{args.eval_split} for early stopping "
+              f"(patience {args.early_stopping_patience} "
+              f"{eval_kwargs['eval_strategy']} evaluation rounds)")
+
     # --- Training ---
     # W&B init is opt-in: with no --wandb-project this returns False and
     # nothing is logged anywhere.
@@ -222,6 +279,12 @@ def main() -> None:
         total_steps = math.ceil(args.num_epochs * len(train_ds)
                                 / (args.batch_size * args.grad_accum))
     warmup_steps = max(1, int(args.warmup_ratio * total_steps))
+    if eval_kwargs:
+        # load_best_model_at_end requires the save and eval cadence to match,
+        # so every evaluation has a checkpoint to fall back to.
+        save_steps = eval_kwargs["eval_steps"]  # None -> save per epoch
+    else:
+        save_steps = max(1, args.max_steps) if args.max_steps > 0 else None
     training_args = TrainingArguments(
         output_dir=str(out_dir),
         num_train_epochs=args.num_epochs,
@@ -235,7 +298,7 @@ def main() -> None:
         weight_decay=0.01,
         logging_steps=1 if args.max_steps > 0 else 10,
         save_strategy="steps" if args.max_steps > 0 else "epoch",
-        save_steps=max(1, args.max_steps) if args.max_steps > 0 else None,
+        save_steps=save_steps,
         save_total_limit=2,
         seed=args.seed,
         bf16=args.bf16,
@@ -244,12 +307,17 @@ def main() -> None:
         neftune_noise_alpha=args.neftune_noise_alpha,
         report_to=["wandb"] if wandb_active else "none",
         remove_unused_columns=False,
+        **eval_kwargs,
     )
+    callbacks = ([EarlyStoppingCallback(args.early_stopping_patience)]
+                 if eval_kwargs else [])
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
+        eval_dataset=eval_ds,
         data_collator=make_collate_fn(tokenizer),
+        callbacks=callbacks,
     )
     trainer.train()
 
