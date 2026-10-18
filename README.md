@@ -50,6 +50,7 @@ llm-finetune-pipeline/
 │   ├── train_dpo.py     # DPO preference-tuning follow-up (trl DPOTrainer)
 │   ├── evaluate.py      # base vs tuned: perplexity, samples, LLM-as-judge
 │   └── inference.py     # single-prompt / interactive generation CLI
+├── tests/               # pytest suite (runs offline, heavy deps stubbed)
 ├── configs/
 │   ├── recommended.yaml # reference config for a real (GPU) training run
 │   └── lr_sweep.yaml    # shared base config for a learning-rate sweep

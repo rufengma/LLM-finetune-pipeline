@@ -31,6 +31,10 @@ def load_seed_tasks(path: Path) -> list:
                 obj = json.loads(line)
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {e}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(
+                    f"{path}:{lineno}: expected a JSON object, got {type(obj).__name__}"
+                )
             if not obj.get("instruction") or not obj.get("response"):
                 raise ValueError(f"{path}:{lineno}: 'instruction' and 'response' are required")
             tasks.append({
