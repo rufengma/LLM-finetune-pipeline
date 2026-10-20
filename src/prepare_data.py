@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -47,6 +48,81 @@ def load_seed_tasks(path: Path) -> list:
     return tasks
 
 
+def sha256_file(path: Path) -> str:
+    """Hex SHA-256 digest of a file's bytes."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def dir_digest(directory: Path) -> str:
+    """Deterministic digest of every file under a directory.
+
+    Files are visited in sorted relative-path order; each file's relative
+    path and bytes feed the digest, so any rename, addition, removal, or
+    content change alters the result.
+    """
+    h = hashlib.sha256()
+    files = sorted(
+        p for p in directory.rglob("*") if p.is_file()
+    )
+    for p in files:
+        h.update(p.relative_to(directory).as_posix().encode("utf-8"))
+        h.update(b"\0")
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    return h.hexdigest()
+
+
+def write_manifest(
+    out: Path,
+    *,
+    input_path: str,
+    input_sha256: str,
+    input_rows: int,
+    seed: int,
+    test_size: int,
+    train_dir: Path,
+    test_dir: Path,
+    train_rows: int,
+    test_rows: int,
+) -> Path:
+    """Write a provenance manifest describing the produced dataset.
+
+    Records the input file's hash and row count plus the seed/test-size that
+    determined the split, and one digest per saved split directory. Re-running
+    ``prepare_data.py`` with the same input and seed must produce an identical
+    manifest -- a quick way to spot silent data drift before training.
+    """
+    manifest = {
+        "input": {
+            "path": input_path,
+            "sha256": input_sha256,
+            "rows": input_rows,
+        },
+        "seed": seed,
+        "test_size": test_size,
+        "splits": {
+            "train": {
+                "path": train_dir.name,
+                "rows": train_rows,
+                "sha256": dir_digest(train_dir),
+            },
+            "test": {
+                "path": test_dir.name,
+                "rows": test_rows,
+                "sha256": dir_digest(test_dir),
+            },
+        },
+    }
+    manifest_path = out / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare instruction-tuning dataset")
     parser.add_argument("--input", default="data/raw/seed_tasks.jsonl")
@@ -80,6 +156,21 @@ def main() -> None:
     print(f"Train: {n_train} examples (avg response {avg_train:.1f} words)")
     print(f"Held-out test: {n_test} examples (avg response {avg_test:.1f} words)")
     print(f"Saved to {out}/train and {out}/test")
+
+    input_path = Path(args.input)
+    manifest_path = write_manifest(
+        out,
+        input_path=str(input_path),
+        input_sha256=sha256_file(input_path),
+        input_rows=len(tasks),
+        seed=args.seed,
+        test_size=args.test_size,
+        train_dir=out / "train",
+        test_dir=out / "test",
+        train_rows=n_train,
+        test_rows=n_test,
+    )
+    print(f"Wrote data manifest to {manifest_path}")
 
 
 if __name__ == "__main__":

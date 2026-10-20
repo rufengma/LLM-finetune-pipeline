@@ -22,7 +22,7 @@ sys.modules.setdefault("datasets", MagicMock())
 sys.modules.setdefault("torch", MagicMock())
 sys.modules.setdefault("numpy", MagicMock())
 
-from src.prepare_data import load_seed_tasks  # noqa: E402
+from src.prepare_data import dir_digest, load_seed_tasks, sha256_file, write_manifest  # noqa: E402
 
 
 def _write(tmp_path, name, content):
@@ -141,3 +141,83 @@ class TestEmptyInput:
     def test_missing_file_raises_filenotfound(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_seed_tasks(tmp_path / "does-not-exist.jsonl")
+
+
+class TestManifest:
+    def _split_dirs(self, tmp_path):
+        train = tmp_path / "train"
+        test = tmp_path / "test"
+        train.mkdir()
+        test.mkdir()
+        (train / "data-00000-of-00001.arrow").write_bytes(b"train-bytes")
+        (train / "dataset_info.json").write_text('{"rows": 68}', encoding="utf-8")
+        (test / "data-00000-of-00001.arrow").write_bytes(b"test-bytes")
+        (test / "dataset_info.json").write_text('{"rows": 12}', encoding="utf-8")
+        return train, test
+
+    def test_sha256_file_matches_hashlib(self, tmp_path):
+        p = _write(tmp_path, "f.bin", "hello")
+        import hashlib
+
+        assert sha256_file(p) == hashlib.sha256(b"hello").hexdigest()
+
+    def test_dir_digest_changes_on_content_change(self, tmp_path):
+        train, _ = self._split_dirs(tmp_path)
+        before = dir_digest(train)
+        (train / "data-00000-of-00001.arrow").write_bytes(b"changed")
+        assert dir_digest(train) != before
+
+    def test_dir_digest_changes_on_new_file(self, tmp_path):
+        train, _ = self._split_dirs(tmp_path)
+        before = dir_digest(train)
+        (train / "extra.json").write_text("{}", encoding="utf-8")
+        assert dir_digest(train) != before
+
+    def test_dir_digest_is_stable(self, tmp_path):
+        train, _ = self._split_dirs(tmp_path)
+        assert dir_digest(train) == dir_digest(train)
+
+    def test_write_manifest_records_hashes_and_counts(self, tmp_path):
+        inp = _write(tmp_path, "seed.jsonl", '{"instruction": "Q", "response": "A"}\n')
+        train, test = self._split_dirs(tmp_path)
+        path = write_manifest(
+            tmp_path,
+            input_path=str(inp),
+            input_sha256=sha256_file(inp),
+            input_rows=80,
+            seed=42,
+            test_size=12,
+            train_dir=train,
+            test_dir=test,
+            train_rows=68,
+            test_rows=12,
+        )
+        import json
+
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        assert manifest["input"]["rows"] == 80
+        assert manifest["input"]["sha256"] == sha256_file(inp)
+        assert manifest["seed"] == 42
+        assert manifest["test_size"] == 12
+        assert manifest["splits"]["train"]["rows"] == 68
+        assert manifest["splits"]["test"]["rows"] == 12
+        assert manifest["splits"]["train"]["sha256"] == dir_digest(train)
+        assert manifest["splits"]["test"]["sha256"] == dir_digest(test)
+
+    def test_write_manifest_is_deterministic(self, tmp_path):
+        inp = _write(tmp_path, "seed.jsonl", '{"instruction": "Q", "response": "A"}\n')
+        train, test = self._split_dirs(tmp_path)
+        kwargs = dict(
+            input_path=str(inp),
+            input_sha256=sha256_file(inp),
+            input_rows=80,
+            seed=42,
+            test_size=12,
+            train_dir=train,
+            test_dir=test,
+            train_rows=68,
+            test_rows=12,
+        )
+        first = write_manifest(tmp_path, **kwargs).read_text(encoding="utf-8")
+        second = write_manifest(tmp_path, **kwargs).read_text(encoding="utf-8")
+        assert first == second
