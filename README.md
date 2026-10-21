@@ -12,31 +12,47 @@ parameter-efficient training, and honest evaluation.
 ## Pipeline
 
 ```mermaid
-flowchart LR
-    subgraph DATA["Data"]
-        raw["data/raw/seed_tasks.jsonl<br/>(80 hand-written instruction/response pairs)"]
-        prefs["data/preferences.jsonl<br/>(optional: prompt / chosen / rejected)"]
+flowchart TB
+    subgraph Data["Data"]
+        direction LR
+        Raw["data/raw/seed_tasks.jsonl<br/>80 instruction / response pairs"]:::input
+        Prefs["data/preferences.jsonl<br/>prompt / chosen / rejected<br/>→ DPO only"]:::input
     end
 
-    raw --> prep["src/prepare_data.py<br/>validate → train/held-out split"]
-    prep --> trainset["data/processed/train"]
-    prep --> testset["data/processed/test"]
+    Prep["src/prepare_data.py<br/>validate → train / held-out split"]:::process
+    TrainSet["data/processed/train<br/>68 examples"]:::store
+    TestSet["data/processed/test<br/>12 held-out examples"]:::store
+    Cfg["configs/*.yaml<br/>--config"]:::entry
+    SFT["src/train.py — LoRA SFT<br/>peft + Trainer · response-only loss · QLoRA"]:::model
+    SFTOut["outputs/&lt;run-name&gt;/<br/>adapter_model.safetensors + tokenizer + config"]:::store
+    DPO["src/train_dpo.py<br/>merge SFT → base + preferences<br/>fresh DPO LoRA vs frozen ref"]:::model
+    DPOOut["outputs/&lt;run-name&gt;-dpo/"]:::store
+    Infer["src/inference.py<br/>single-prompt / interactive CLI"]:::output
+    Eval["src/evaluate.py<br/>held-out perplexity<br/>side-by-side + LLM-as-judge"]:::output
+    Results["eval/results.md<br/>base vs tuned report"]:::output
 
-    trainset --> sft["src/train.py<br/>LoRA SFT · peft + Trainer<br/>response-only loss · QLoRA · optional W&B"]
-    cfg["configs/*.yaml<br/>fed via --config"] -.-> sft
-    sft --> sftout["outputs/&lt;run-name&gt;/<br/>adapter_model.safetensors + tokenizer<br/>+ training_config.json"]
+    Raw --> Prep
+    Prep --> TrainSet
+    Prep --> TestSet
+    TrainSet --> SFT
+    Cfg -.-> SFT
+    SFT --> SFTOut
+    SFTOut --> DPO
+    SFTOut --> Infer
+    SFTOut --> Eval
+    DPO --> DPOOut
+    DPOOut -.-> Infer
+    DPOOut -.-> Eval
+    TestSet --> Eval
+    Eval --> Results
 
-    sftout --> dpo["src/train_dpo.py<br/>merge SFT adapter into base,<br/>train fresh DPO LoRA vs frozen reference"]
-    prefs -.-> dpo
-    dpo --> dpoout["outputs/&lt;run-name&gt;-dpo/"]
-
-    sftout --> infer["src/inference.py<br/>single-prompt / interactive generation CLI"]
-    dpoout -.-> infer
-
-    sftout --> eval["src/evaluate.py<br/>held-out perplexity + side-by-side samples<br/>+ optional LLM-as-judge"]
-    dpoout -.-> eval
-    testset --> eval
-    eval --> results["eval/results.md<br/>(base vs tuned comparison report)"]
+    classDef entry fill:#0F172A,stroke:#0F172A,color:#FFFFFF,stroke-width:0px
+    classDef input fill:#EAF2FF,stroke:#3B82F6,stroke-width:1.5px,color:#1E3A8A
+    classDef process fill:#E6F7F2,stroke:#0D9488,stroke-width:1.5px,color:#134E4A
+    classDef model fill:#FFF4E0,stroke:#F59E0B,stroke-width:1.5px,color:#78350F
+    classDef store fill:#F3E8FF,stroke:#8B5CF6,stroke-width:1.5px,color:#4C1D95
+    classDef output fill:#E8F5E9,stroke:#22C55E,stroke-width:1.5px,color:#14532D
+    style Data fill:#F8FAFC,stroke:#CBD5E1,stroke-width:1.5px
 ```
 
 ## Project structure
