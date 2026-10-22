@@ -1,0 +1,49 @@
+# CI — every push and pull request runs the test suite, prepares the
+# dataset, and smoke-trains a tiny model for a few steps on CPU
+# (no GPU / API key needed).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-smoke-train:
+    name: pytest + smoke train
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ runner.os }}-gpt2
+
+      - name: Install dependencies (CPU torch first)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest tests/ -q
+
+      - name: Prepare dataset
+        run: python src/prepare_data.py
+
+      - name: Smoke-train tiny model (10 steps, CPU)
+        run: |
+          python src/train.py --model-id gpt2 --max-steps 10 --batch-size 2 \
+            --max-seq-length 256 --output-dir outputs/smoke-test
+
+      - name: Verify adapter was saved
+        run: |
+          test -f outputs/smoke-test/adapter_model.safetensors
+          test -f outputs/smoke-test/training_config.json
