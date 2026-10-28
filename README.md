@@ -66,7 +66,8 @@ llm-finetune-pipeline/
 │   ├── prepare_data.py  # JSONL → HuggingFace dataset with train/held-out split
 │   ├── train.py         # LoRA fine-tuning (peft + transformers Trainer)
 │   ├── train_dpo.py     # DPO preference-tuning follow-up (trl DPOTrainer)
-│   ├── evaluate.py      # base vs tuned: perplexity, samples, LLM-as-judge
+│   ├── evaluate.py      # base vs tuned: perplexity, samples, LLM-as-judge, ROUGE
+│   ├── rouge.py         # dependency-free ROUGE-1/2/L for the summary subset
 │   └── inference.py     # single-prompt / interactive generation CLI
 ├── tests/               # pytest suite (runs offline, heavy deps stubbed)
 ├── configs/
@@ -132,6 +133,10 @@ python src/evaluate.py --model-id gpt2 --adapter-dir outputs/smoke-test
 #    with LLM-as-judge (needs .env, see .env.example):
 python src/evaluate.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
     --adapter-dir outputs/qwen2.5-1.5b-lora --judge
+
+#    with ROUGE on the summarization subset of the held-out set:
+python src/evaluate.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
+    --adapter-dir outputs/qwen2.5-1.5b-lora --rouge
 
 # 5. Inference
 python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test \
@@ -265,6 +270,20 @@ cp .env.example .env   # fill in JUDGE_API_KEY / JUDGE_BASE_URL / JUDGE_MODEL
 Each pair is judged in **both orders**; a win counts only when the judge
 agrees in both orderings (mitigates position bias). Works with OpenAI, vLLM,
 Ollama, or any OpenAI-compatible endpoint.
+
+## ROUGE on the summarization subset (optional)
+
+`evaluate.py --rouge` scores base vs tuned generations with ROUGE-1/2/L
+against the reference responses, but only on the summarization subset of
+the held-out set: seed tasks carry no task-type label, so an example counts
+when its instruction contains a word starting with "summar" (summarize /
+summary / summarization). The current held-out split has 1 such example out
+of 12, so treat the numbers as a smoke signal, not a benchmark — the subset
+grows automatically as summarization tasks are added to the seed data.
+Scoring is a dependency-free implementation in `src/rouge.py` (no
+`rouge-score` install needed), and results land in `eval/results.md` as a
+"ROUGE on the summarization subset" table. If the subset is empty, the
+section is skipped with a note.
 
 ## Recommended real config
 

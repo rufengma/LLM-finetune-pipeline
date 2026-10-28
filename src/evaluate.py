@@ -4,6 +4,8 @@ Metrics:
   1. Token-level loss / perplexity on held-out responses (response tokens only).
   2. Side-by-side generations for N prompts -> eval/results.md
   3. Optional LLM-as-judge win rate (--judge, needs JUDGE_API_KEY in .env).
+  4. Optional ROUGE-1/2/L (--rouge) on the summarization subset of the
+     held-out set, scored against the reference responses.
 
 Usage:
     python src/evaluate.py --model-id gpt2 --adapter-dir outputs/smoke-test
@@ -24,6 +26,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import build_prompt, ensure_pad_token, make_tokenize_fn, set_seed  # noqa: E402
+from rouge import mean_rouge, score_rouge, summarization_subset  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +42,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--judge", action="store_true",
                    help="Run LLM-as-judge pairwise comparison (needs .env)")
+    p.add_argument("--rouge", action="store_true",
+                   help="Score ROUGE-1/2/L of base vs tuned generations on "
+                        "the summarization subset of the held-out set")
     return p.parse_args()
 
 
@@ -210,7 +216,51 @@ def main() -> None:
                 "",
             ]))
 
-    # --- 3. Optional LLM judge (appended at the end) ---
+    # --- 3. Optional ROUGE on the summarization subset ---
+    if args.rouge:
+        summary_examples = summarization_subset(test_ds)
+        print(f"\nSummarization subset: {len(summary_examples)} "
+              f"of {len(test_ds)} held-out examples")
+        if summary_examples:
+            base_scores, tuned_scores = [], []
+            for ex in summary_examples:
+                prompt = build_prompt(ex["instruction"], ex["input"])
+                base_scores.append(score_rouge(
+                    generate(base_model, tokenizer, prompt, args.max_new_tokens),
+                    ex["response"]))
+                tuned_scores.append(score_rouge(
+                    generate(tuned_model, tokenizer, prompt, args.max_new_tokens),
+                    ex["response"]))
+            base_mean, tuned_mean = mean_rouge(base_scores), mean_rouge(tuned_scores)
+            print("ROUGE F1 (mean over summarization subset):")
+            for name in ("rouge1", "rouge2", "rougeL"):
+                print(f"  {name}: base {base_mean[name]['f1']:.3f} | "
+                      f"tuned {tuned_mean[name]['f1']:.3f}")
+            with open(results_path, "a", encoding="utf-8") as f:
+                f.write("\n".join([
+                    "",
+                    f"## ROUGE on the summarization subset "
+                    f"(n={len(summary_examples)}, greedy decoding)",
+                    "",
+                    "| Metric | Base F1 | LoRA-tuned F1 |",
+                    "|--------|---------|--------------|",
+                    *[
+                        f"| {name} | {base_mean[name]['f1']:.3f} | "
+                        f"{tuned_mean[name]['f1']:.3f} |"
+                        for name in ("rouge1", "rouge2", "rougeL")
+                    ],
+                    "",
+                    "> Subset = held-out examples whose instruction asks for a "
+                    "summary (`summarize` / `summary` / `summarization`); "
+                    "scored against the reference response with the "
+                    "dependency-free implementation in `src/rouge.py`.",
+                    "",
+                ]))
+        else:
+            print("No summarization examples in the held-out set; "
+                  "skipping ROUGE section.")
+
+    # --- 4. Optional LLM judge (appended at the end) ---
     judge_model = os.environ.get("JUDGE_MODEL", "gpt-4o-mini")
     if args.judge:
         wins = run_judge(samples, judge_model)
