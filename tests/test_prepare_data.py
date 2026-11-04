@@ -22,7 +22,7 @@ sys.modules.setdefault("datasets", MagicMock())
 sys.modules.setdefault("torch", MagicMock())
 sys.modules.setdefault("numpy", MagicMock())
 
-from src.prepare_data import dir_digest, load_seed_tasks, sha256_file, write_manifest  # noqa: E402
+from src.prepare_data import dir_digest, filter_tasks, load_seed_tasks, sha256_file, write_manifest  # noqa: E402
 
 
 def _write(tmp_path, name, content):
@@ -221,3 +221,74 @@ class TestManifest:
         first = write_manifest(tmp_path, **kwargs).read_text(encoding="utf-8")
         second = write_manifest(tmp_path, **kwargs).read_text(encoding="utf-8")
         assert first == second
+
+
+def _task(instruction="Summarize this text", input_="", response="A short summary here"):
+    return {"instruction": instruction, "input": input_, "response": response}
+
+
+class TestFilterTasks:
+    def test_keeps_clean_rows_in_order(self):
+        rows = [_task(), _task(instruction="Translate this sentence")]
+        kept, report = filter_tasks(rows)
+        assert kept == rows
+        assert report["kept_rows"] == 2 and report["input_rows"] == 2
+
+    def test_exact_duplicate_dropped_keeps_first(self):
+        rows = [_task(response="First version here"), _task(response="First version here")]
+        kept, report = filter_tasks(rows)
+        assert kept == rows[:1] and report["duplicate"] == 1
+
+    def test_duplicate_ignores_case_and_whitespace(self):
+        rows = [_task(), _task(instruction="summarize   this text", response="a SHORT summary here")]
+        kept, report = filter_tasks(rows)
+        assert len(kept) == 1 and report["duplicate"] == 1
+
+    def test_same_instruction_different_response_is_not_a_duplicate(self):
+        rows = [_task(response="First answer here"), _task(response="Second answer here")]
+        kept, report = filter_tasks(rows)
+        assert len(kept) == 2 and report["duplicate"] == 0
+
+    def test_keep_duplicates_flag_disables_dedup(self):
+        rows = [_task(), _task()]
+        kept, report = filter_tasks(rows, dedup=False)
+        assert len(kept) == 2 and report["duplicate"] == 0
+
+    def test_short_instruction_dropped(self):
+        kept, report = filter_tasks([_task(instruction="Hi")])
+        assert kept == [] and report["instruction_too_short"] == 1
+
+    def test_short_response_dropped(self):
+        kept, report = filter_tasks([_task(response="ok")])
+        assert kept == [] and report["response_too_short"] == 1
+
+    def test_long_response_dropped(self):
+        kept, report = filter_tasks([_task(response="word " * 50)], max_response_words=10)
+        assert kept == [] and report["response_too_long"] == 1
+
+    def test_response_echoing_instruction_dropped(self):
+        kept, report = filter_tasks([_task(response="Summarize this text")])
+        assert kept == [] and report["response_echoes_instruction"] == 1
+
+    def test_single_repeated_word_response_dropped(self):
+        kept, report = filter_tasks([_task(response="ha ha ha ha")])
+        assert kept == [] and report["response_degenerate"] == 1
+
+    def test_repeated_phrase_is_not_degenerate(self):
+        kept, report = filter_tasks([_task(response="ha ha, very funny indeed")])
+        assert len(kept) == 1 and report["response_degenerate"] == 0
+
+    def test_custom_thresholds_are_honored(self):
+        kept, report = filter_tasks([_task(response="one two")], min_response_words=2)
+        assert len(kept) == 1 and report["response_too_short"] == 0
+
+    def test_inverted_limits_rejected(self):
+        with pytest.raises(ValueError, match="max_response_words"):
+            filter_tasks([_task()], min_response_words=10, max_response_words=5)
+
+    def test_report_counts_sum_to_input(self):
+        rows = [_task(), _task(), _task(instruction="Hi"), _task(response="ok")]
+        _, report = filter_tasks(rows)
+        dropped = sum(v for k, v in report.items()
+                      if k not in ("input_rows", "kept_rows"))
+        assert report["kept_rows"] + dropped == report["input_rows"] == 4
