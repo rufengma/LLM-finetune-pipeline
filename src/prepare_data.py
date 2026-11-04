@@ -48,6 +48,81 @@ def load_seed_tasks(path: Path) -> list:
     return tasks
 
 
+def _normalize(text: str) -> str:
+    """Collapse whitespace and casefold, for dedup comparison only."""
+    return " ".join(str(text).split()).casefold()
+
+
+def _word_count(text: str) -> int:
+    return len(str(text).split())
+
+
+def filter_tasks(tasks: list, *, dedup: bool = True,
+                 min_instruction_words: int = 3,
+                 min_response_words: int = 3,
+                 max_response_words: int = 1024) -> tuple:
+    """Drop duplicates and low-quality examples, keeping original order.
+
+    Dedup compares the normalized (whitespace-collapsed, casefolded)
+    instruction+input+response triple and keeps the first occurrence, so a
+    reworded-casing copy of the same example does not double-weight it in
+    training. Length filters drop instructions that are too short to be
+    meaningful and responses that are too short to teach anything or so
+    long they are likely pasted documents. Quality filters drop responses
+    that merely echo the instruction or degenerate into one repeated word.
+
+    Returns ``(kept_tasks, report)`` where ``report`` counts how many rows
+    each reason removed, so ``main()`` can print (and the manifest can
+    record) exactly what the filters did.
+    """
+    if min_instruction_words < 0 or min_response_words < 0 or max_response_words < 0:
+        raise ValueError("filter word limits must be non-negative")
+    if max_response_words < min_response_words:
+        raise ValueError("max_response_words must be >= min_response_words")
+    report = {
+        "input_rows": len(tasks),
+        "duplicate": 0,
+        "instruction_too_short": 0,
+        "response_too_short": 0,
+        "response_too_long": 0,
+        "response_echoes_instruction": 0,
+        "response_degenerate": 0,
+        "kept_rows": 0,
+    }
+    seen = set()
+    kept = []
+    for task in tasks:
+        key = (
+            _normalize(task["instruction"]),
+            _normalize(task["input"]),
+            _normalize(task["response"]),
+        )
+        if dedup and key in seen:
+            report["duplicate"] += 1
+            continue
+        seen.add(key)
+        if _word_count(task["instruction"]) < min_instruction_words:
+            report["instruction_too_short"] += 1
+            continue
+        n_resp = _word_count(task["response"])
+        if n_resp < min_response_words:
+            report["response_too_short"] += 1
+            continue
+        if n_resp > max_response_words:
+            report["response_too_long"] += 1
+            continue
+        if _normalize(task["response"]) == _normalize(task["instruction"]):
+            report["response_echoes_instruction"] += 1
+            continue
+        resp_words = task["response"].split()
+        if len(resp_words) > 1 and len(set(w.casefold() for w in resp_words)) == 1:
+            report["response_degenerate"] += 1
+            continue
+        kept.append(task)
+    report["kept_rows"] = len(kept)
+    return kept, report
+
+
 def sha256_file(path: Path) -> str:
     """Hex SHA-256 digest of a file's bytes."""
     h = hashlib.sha256()
@@ -89,6 +164,7 @@ def write_manifest(
     test_dir: Path,
     train_rows: int,
     test_rows: int,
+    filters: dict | None = None,
 ) -> Path:
     """Write a provenance manifest describing the produced dataset.
 
@@ -118,6 +194,8 @@ def write_manifest(
             },
         },
     }
+    if filters is not None:
+        manifest["filters"] = filters
     manifest_path = out / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest_path
@@ -130,12 +208,33 @@ def main() -> None:
     parser.add_argument("--test-size", type=int, default=12,
                         help="Number of held-out examples (absolute count)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--min-instruction-words", type=int, default=3,
+                        help="Drop examples whose instruction is shorter than this (words)")
+    parser.add_argument("--min-response-words", type=int, default=3,
+                        help="Drop examples whose response is shorter than this (words)")
+    parser.add_argument("--max-response-words", type=int, default=1024,
+                        help="Drop examples whose response is longer than this (words)")
+    parser.add_argument("--keep-duplicates", action="store_true",
+                        help="Disable dedup of identical instruction+input+response rows")
     args = parser.parse_args()
 
     set_seed(args.seed)
 
     tasks = load_seed_tasks(Path(args.input))
     print(f"Loaded {len(tasks)} seed tasks from {args.input}")
+
+    tasks, filter_report = filter_tasks(
+        tasks,
+        dedup=not args.keep_duplicates,
+        min_instruction_words=args.min_instruction_words,
+        min_response_words=args.min_response_words,
+        max_response_words=args.max_response_words,
+    )
+    dropped = {k: v for k, v in filter_report.items()
+               if k not in ("input_rows", "kept_rows") and v}
+    print(f"Filters kept {filter_report['kept_rows']} of "
+          f"{filter_report['input_rows']} rows"
+          + (f"; dropped: {dropped}" if dropped else "; nothing dropped"))
 
     ds = Dataset.from_list(tasks)
     split = ds.train_test_split(test_size=args.test_size, seed=args.seed)
@@ -162,13 +261,14 @@ def main() -> None:
         out,
         input_path=str(input_path),
         input_sha256=sha256_file(input_path),
-        input_rows=len(tasks),
+        input_rows=filter_report["input_rows"],
         seed=args.seed,
         test_size=args.test_size,
         train_dir=out / "train",
         test_dir=out / "test",
         train_rows=n_train,
         test_rows=n_test,
+        filters=filter_report,
     )
     print(f"Wrote data manifest to {manifest_path}")
 
