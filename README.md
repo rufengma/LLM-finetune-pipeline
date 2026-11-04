@@ -97,6 +97,21 @@ pip install -r requirements.txt
 # 2. Prepare data (80 seed tasks → 68 train / 12 held-out)
 python src/prepare_data.py
 
+Data cleaning (applied before the split, reported on stdout and recorded
+in `data/processed/manifest.json` under `filters`):
+- **Dedup:** identical instruction+input+response rows (ignoring case and
+  extra whitespace) are collapsed to the first occurrence, so a duplicated
+  example cannot double-weight training. Disable with `--keep-duplicates`.
+- **Length filters:** `--min-instruction-words 3` (default),
+  `--min-response-words 3` (default), `--max-response-words 1024`
+  (default) drop instructions too short to be meaningful and responses
+  too short to teach anything or so long they look like pasted documents.
+- **Quality filters:** responses that merely echo the instruction, or
+  degenerate into a single repeated word, are dropped.
+Tune the thresholds on the command line, e.g.
+`python src/prepare_data.py --min-response-words 10 --max-response-words 512`.
+The bundled 80 seed tasks all pass the defaults (80 kept, 0 dropped).
+
 # 3a. Smoke test: full pipeline on CPU with gpt2 (~10 steps, a few minutes)
 python src/train.py --model-id gpt2 --max-steps 10 --batch-size 2 \
     --max-seq-length 256 --output-dir outputs/smoke-test
