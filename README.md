@@ -170,9 +170,16 @@ the gpt2 weights are cached between runs.
 
 ## Method notes
 
-- **Prompt format.** A simple Alpaca-style template (`### Instruction:` /
-  `### Response:`) is used instead of model-specific chat templates, so the
-  pipeline works with any causal LM, including GPT-2.
+- **Prompt format.** Two templates, selected with `--prompt-template`
+  (`alpaca` default, `chatml`) in `train.py`, `train_dpo.py`,
+  `evaluate.py`, and `inference.py` — and via `prompt_template:` in a
+  `--config` YAML for `train.py`. Alpaca (`### Instruction:` /
+  `### Response:`) works with any causal LM, including GPT-2. ChatML
+  (`<|im_start|>user` / `<|im_start|>assistant`, assistant turns closed
+  with `<|im_end|>`) matches Qwen/Instruct-style models; use it only
+  when the base model's tokenizer ships those markers, otherwise they
+  are plain text. Always use the same template for training, evaluation,
+  and inference — the choice is recorded in `training_config.json`.
 - **Response-only loss.** Instruction tokens are masked with `-100`, so the
   model learns to *produce* good responses rather than memorize instructions.
   This is the standard practice for instruction tuning — and a common

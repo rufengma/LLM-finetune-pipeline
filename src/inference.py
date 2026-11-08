@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--adapter-dir", default=None,
                    help="Path to LoRA adapter; omit for base model only")
     p.add_argument("--prompt", default=None, help="Single instruction to answer")
+    p.add_argument("--prompt-template", default="alpaca",
+                   choices=["alpaca", "chatml"],
+                   help="Prompt format; must match the template the adapter "
+                        "was trained with (see training_config.json)")
     p.add_argument("--interactive", action="store_true", help="REPL mode")
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.7)
@@ -53,8 +57,9 @@ def load(model_id: str, adapter_dir: str | None):
 
 @torch.no_grad()
 def answer(model, tokenizer, instruction: str, max_new_tokens: int,
-           temperature: float, top_p: float) -> str:
-    prompt = build_prompt(instruction)
+           temperature: float, top_p: float,
+           template: str = "alpaca") -> str:
+    prompt = build_prompt(instruction, template=template)
     inputs = tokenizer(prompt, return_tensors="pt")
     if next(model.parameters()).is_cuda:
         inputs = {k: v.cuda() for k, v in inputs.items()}
@@ -85,10 +90,12 @@ def main() -> None:
                 continue
             print("\nAssistant:", answer(model, tokenizer, instruction,
                                         args.max_new_tokens, args.temperature,
-                                        args.top_p), "\n")
+                                        args.top_p,
+                                        template=args.prompt_template), "\n")
     else:
         print(answer(model, tokenizer, args.prompt, args.max_new_tokens,
-                     args.temperature, args.top_p))
+                     args.temperature, args.top_p,
+                     template=args.prompt_template))
 
 
 if __name__ == "__main__":

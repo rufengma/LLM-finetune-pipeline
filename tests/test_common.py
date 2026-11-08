@@ -22,6 +22,7 @@ sys.modules.setdefault("torch", MagicMock())
 sys.modules.setdefault("numpy", MagicMock())
 
 from src.common import (  # noqa: E402
+    CHATML_END,
     PROMPT_TEMPLATE,
     build_prompt,
     default_target_modules,
@@ -67,6 +68,38 @@ class TestBuildPrompt:
     def test_prompt_ends_with_response_marker(self):
         assert build_prompt("x").endswith("### Response:\n")
 
+    def test_default_template_is_alpaca(self):
+        assert build_prompt("x") == build_prompt("x", template="alpaca")
+
+    def test_unknown_template_raises(self):
+        with pytest.raises(ValueError, match="unknown prompt template"):
+            build_prompt("x", template="llama3")
+
+
+class TestBuildPromptChatML:
+    def test_instruction_only_exact_shape(self):
+        assert build_prompt("Classify this text", template="chatml") == (
+            "<|im_start|>user\nClassify this text\n"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
+
+    def test_with_input_text(self):
+        assert build_prompt("Summarize", "Long article here", template="chatml") == (
+            "<|im_start|>user\nSummarize\n\nLong article here\n"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
+
+    def test_whitespace_only_input_is_ignored(self):
+        assert build_prompt("Answer", "   \n  ", template="chatml") == \
+            build_prompt("Answer", "", template="chatml")
+
+    def test_prompt_ends_with_assistant_marker(self):
+        assert build_prompt("x", template="chatml").endswith(
+            "<|im_start|>assistant\n")
+
+    def test_chatml_and_alpaca_differ(self):
+        assert build_prompt("x", template="chatml") != build_prompt("x")
+
 
 class TestFormatFullText:
     def test_full_text_is_prompt_plus_response_plus_eos(self):
@@ -87,6 +120,23 @@ class TestFormatFullText:
         text = format_full_text("QA", "What is AI?", "A field of CS.", "</s>")
         assert "### Input:\nWhat is AI?\n" in text
         assert text.endswith("A field of CS.</s>")
+
+    def test_chatml_closes_assistant_turn_with_im_end(self):
+        text = format_full_text("Reply", "", "yes", "</s>", template="chatml")
+        assert text == (
+            "<|im_start|>user\nReply\n<|im_end|>\n"
+            "<|im_start|>assistant\nyes<|im_end|></s>"
+        )
+
+    def test_chatml_eos_equal_to_im_end_is_not_duplicated(self):
+        text = format_full_text("Reply", "", "yes", CHATML_END,
+                                template="chatml")
+        assert text.endswith("yes<|im_end|>")
+        assert text.count(CHATML_END) == 2  # user turn + assistant turn
+
+    def test_chatml_unknown_template_raises(self):
+        with pytest.raises(ValueError, match="unknown prompt template"):
+            format_full_text("i", "", "r", "</s>", template="nope")
 
 
 class TestDefaultTargetModules:

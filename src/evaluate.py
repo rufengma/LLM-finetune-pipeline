@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", default="data/processed")
     p.add_argument("--output-dir", default="eval")
     p.add_argument("--max-seq-length", type=int, default=1024)
+    p.add_argument("--prompt-template", default="alpaca",
+                   choices=["alpaca", "chatml"],
+                   help="Prompt format for generation and held-out loss; "
+                        "must match the template the adapter was trained "
+                        "with (see training_config.json)")
     p.add_argument("--num-samples", type=int, default=8,
                    help="Prompts for side-by-side generation")
     p.add_argument("--max-new-tokens", type=int, default=128)
@@ -49,9 +54,9 @@ def parse_args() -> argparse.Namespace:
 
 
 @torch.no_grad()
-def heldout_loss(model, tokenizer, test_ds, max_len) -> tuple:
+def heldout_loss(model, tokenizer, test_ds, max_len, template: str = "alpaca") -> tuple:
     """Mean NLL and perplexity over response tokens of the held-out set."""
-    tokenize = make_tokenize_fn(tokenizer, max_len)
+    tokenize = make_tokenize_fn(tokenizer, max_len, template=template)
     total_nll, total_tokens = 0.0, 0
     model.eval()
     for ex in test_ds:
@@ -165,8 +170,10 @@ def main() -> None:
     print(f"Held-out set: {len(test_ds)} examples")
 
     # --- 1. Perplexity ---
-    base_nll, base_ppl = heldout_loss(base_model, tokenizer, test_ds, args.max_seq_length)
-    tuned_nll, tuned_ppl = heldout_loss(tuned_model, tokenizer, test_ds, args.max_seq_length)
+    base_nll, base_ppl = heldout_loss(base_model, tokenizer, test_ds, args.max_seq_length,
+                                      template=args.prompt_template)
+    tuned_nll, tuned_ppl = heldout_loss(tuned_model, tokenizer, test_ds, args.max_seq_length,
+                                        template=args.prompt_template)
     print(f"\nHeld-out NLL  | base: {base_nll:.4f} | tuned: {tuned_nll:.4f}")
     print(f"Held-out PPL  | base: {base_ppl:.2f} | tuned: {tuned_ppl:.2f}")
 
@@ -193,7 +200,8 @@ def main() -> None:
     # --- 2. Side-by-side generations ---
     samples = []
     for i, ex in enumerate(test_ds.select(range(min(args.num_samples, len(test_ds)))), 1):
-        prompt = build_prompt(ex["instruction"], ex["input"])
+        prompt = build_prompt(ex["instruction"], ex["input"],
+                              template=args.prompt_template)
         sample = {
             "instruction": ex["instruction"] + (f"\nInput: {ex['input']}" if ex["input"] else ""),
             "reference": ex["response"],
@@ -224,7 +232,8 @@ def main() -> None:
         if summary_examples:
             base_scores, tuned_scores = [], []
             for ex in summary_examples:
-                prompt = build_prompt(ex["instruction"], ex["input"])
+                prompt = build_prompt(ex["instruction"], ex["input"],
+                                      template=args.prompt_template)
                 base_scores.append(score_rouge(
                     generate(base_model, tokenizer, prompt, args.max_new_tokens),
                     ex["response"]))

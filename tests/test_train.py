@@ -111,3 +111,30 @@ class TestBuildEvalKwargs:
         # patience < 1 is rejected in main(), so here it simply disables
         args = _parse(monkeypatch, ["--early-stopping-patience", "0"])
         assert build_eval_kwargs(args) == {}
+
+
+class TestPromptTemplateArgs:
+    def test_defaults_to_alpaca(self, monkeypatch):
+        args = _parse(monkeypatch, [])
+        assert args.prompt_template == "alpaca"
+
+    def test_explicit_chatml_is_accepted(self, monkeypatch):
+        args = _parse(monkeypatch, ["--prompt-template", "chatml"])
+        assert args.prompt_template == "chatml"
+
+    def test_unknown_template_rejected(self, monkeypatch):
+        with pytest.raises(SystemExit):
+            _parse(monkeypatch, ["--prompt-template", "llama3"])
+
+    def test_yaml_config_accepts_the_key(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "tmpl.yaml"
+        cfg.write_text("prompt_template: chatml\n")
+        args = _parse(monkeypatch, ["--config", str(cfg)])
+        assert args.prompt_template == "chatml"
+
+    def test_cli_flag_overrides_yaml(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "tmpl.yaml"
+        cfg.write_text("prompt_template: chatml\n")
+        args = _parse(monkeypatch, ["--config", str(cfg),
+                                    "--prompt-template", "alpaca"])
+        assert args.prompt_template == "alpaca"

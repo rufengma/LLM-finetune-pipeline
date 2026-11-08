@@ -5,27 +5,67 @@ import random
 import numpy as np
 import torch
 
-# Alpaca-style template. Deliberately model-agnostic: it works with any causal
-# LM, including models like GPT-2 that ship without a chat template.
+# Prompt templates. The pipeline defaults to a simple Alpaca-style
+# template, which works with any causal LM (including GPT-2, which ships
+# without a chat template). `chatml` is the ChatML format used by
+# Qwen/Instruct-style models; use it when the base model was pretrained
+# with those markers, so train and eval/inference format prompts the same
+# way. NOTE: ChatML markers are plain text to a tokenizer that does not
+# ship them as special tokens (e.g. GPT-2) -- they still round-trip, but
+# the model has never seen them as turn boundaries, so prefer `alpaca`
+# for such models.
 PROMPT_TEMPLATE = """### Instruction:
 {instruction}
 
 ### Response:
 {response}"""
 
+CHATML_END = "<|im_end|>"
 
-def build_prompt(instruction: str, input_text: str = "") -> str:
-    """Render the prompt prefix (everything before the assistant's response)."""
-    text = f"### Instruction:\n{instruction.strip()}"
-    if input_text and input_text.strip():
-        text += f"\n\n### Input:\n{input_text.strip()}"
+PROMPT_TEMPLATES = ("alpaca", "chatml")
+
+
+def build_prompt(instruction: str, input_text: str = "",
+                 template: str = "alpaca") -> str:
+    """Render the prompt prefix (everything before the assistant's response).
+
+    `template` selects the format: "alpaca" (default) or "chatml".
+    Raises ValueError for an unknown template name.
+    """
+    if template not in PROMPT_TEMPLATES:
+        raise ValueError(
+            f"unknown prompt template: {template!r} "
+            f"(valid: {', '.join(PROMPT_TEMPLATES)})")
+    instruction = instruction.strip()
+    input_text = input_text.strip() if input_text else ""
+    if template == "chatml":
+        text = f"<|im_start|>user\n{instruction}"
+        if input_text:
+            text += f"\n\n{input_text}"
+        text += f"\n{CHATML_END}\n<|im_start|>assistant\n"
+        return text
+    text = f"### Instruction:\n{instruction}"
+    if input_text:
+        text += f"\n\n### Input:\n{input_text}"
     text += "\n\n### Response:\n"
     return text
 
 
-def format_full_text(instruction: str, input_text: str, response: str, eos_token: str) -> str:
-    """Render a complete training example: prompt + response + EOS."""
-    return build_prompt(instruction, input_text) + response.strip() + eos_token
+def format_full_text(instruction: str, input_text: str, response: str,
+                     eos_token: str, template: str = "alpaca") -> str:
+    """Render a complete training example: prompt + response + EOS.
+
+    For ChatML the assistant turn is closed with `<|im_end|>`; the EOS
+    token is appended after it unless it already is `<|im_end|>`
+    (as with Qwen tokenizers, where the two coincide).
+    """
+    prompt = build_prompt(instruction, input_text, template=template)
+    if template == "chatml":
+        terminator = CHATML_END
+        if eos_token != CHATML_END:
+            terminator += eos_token
+        return prompt + response.strip() + terminator
+    return prompt + response.strip() + eos_token
 
 
 def set_seed(seed: int) -> None:
@@ -119,7 +159,7 @@ def make_collate_fn(tokenizer):
     return collate_fn
 
 
-def make_tokenize_fn(tokenizer, max_len):
+def make_tokenize_fn(tokenizer, max_len, template: str = "alpaca"):
     """Build a mapping function that tokenizes examples with response-only labels.
 
     Instruction tokens are masked with -100 so the loss is computed on the
@@ -127,8 +167,11 @@ def make_tokenize_fn(tokenizer, max_len):
     """
 
     def tokenize_fn(example):
-        prompt = build_prompt(example["instruction"], example["input"])
-        full_text = prompt + example["response"].strip() + tokenizer.eos_token
+        prompt = build_prompt(example["instruction"], example["input"],
+                              template=template)
+        full_text = format_full_text(example["instruction"], example["input"],
+                                     example["response"], tokenizer.eos_token,
+                                     template=template)
 
         # Tokenize prompt and full text consistently so the prompt is an exact
         # token prefix of the full sequence.

@@ -64,6 +64,11 @@ def parse_args() -> argparse.Namespace:
                    help="Optional path to save the derived preference pairs as JSONL")
     p.add_argument("--output-dir", default="outputs/dpo")
     p.add_argument("--max-seq-length", type=int, default=1024)
+    p.add_argument("--prompt-template", default="alpaca",
+                   choices=["alpaca", "chatml"],
+                   help="Prompt format for preference pairs derived with "
+                        "--build-from-sft (same templates as train.py); "
+                        "match the template the SFT adapter was trained with")
     # LoRA
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=32)
@@ -125,7 +130,8 @@ def load_preference_jsonl(path: Path) -> Dataset:
     return Dataset.from_list(rows)
 
 
-def build_preferences_from_sft(train_ds, seed: int = 42) -> Dataset:
+def build_preferences_from_sft(train_ds, seed: int = 42,
+                               template: str = "alpaca") -> Dataset:
     """Derive (prompt, chosen, rejected) triples from the SFT train set.
 
     chosen = the example's own response; rejected = a response written for a
@@ -152,7 +158,8 @@ def build_preferences_from_sft(train_ds, seed: int = 42) -> Dataset:
     for i in range(n):
         ex, neg = train_ds[i], train_ds[idx[i]]
         rows.append({
-            "prompt": build_prompt(ex["instruction"], ex["input"]),
+            "prompt": build_prompt(ex["instruction"], ex["input"],
+                                   template=template),
             "chosen": ex["response"].strip(),
             "rejected": neg["response"].strip(),
         })
@@ -188,7 +195,8 @@ def main() -> None:
         print(f"Loaded {len(pref_ds)} preference pairs from {args.dpo_data}")
     elif args.build_from_sft:
         train_ds = load_from_disk(str(Path(args.data_dir) / "train"))
-        pref_ds = build_preferences_from_sft(train_ds, seed=args.seed)
+        pref_ds = build_preferences_from_sft(train_ds, seed=args.seed,
+                                             template=args.prompt_template)
         print(f"Derived {len(pref_ds)} preference pairs from SFT train set")
         if args.save_preferences_to:
             out = Path(args.save_preferences_to)

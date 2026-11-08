@@ -53,6 +53,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", default="data/processed")
     p.add_argument("--output-dir", default="outputs/qwen2.5-1.5b-lora")
     p.add_argument("--max-seq-length", type=int, default=1024)
+    p.add_argument("--prompt-template", default="alpaca",
+                   choices=["alpaca", "chatml"],
+                   help="Prompt format for training examples: 'alpaca' "
+                        "(### Instruction: / ### Response:, default, works "
+                        "with any causal LM) or 'chatml' (ChatML markers, "
+                        "for Qwen/Instruct-style models). The choice is "
+                        "recorded in training_config.json -- use the same "
+                        "template for evaluation and inference.")
     # LoRA
     p.add_argument("--lora-r", type=int, default=16, help="LoRA rank")
     p.add_argument("--lora-alpha", type=int, default=32, help="LoRA scaling factor")
@@ -245,7 +253,8 @@ def main() -> None:
 
     # --- Data ---
     train_ds = load_from_disk(str(Path(args.data_dir) / "train"))
-    train_ds = train_ds.map(make_tokenize_fn(tokenizer, args.max_seq_length),
+    train_ds = train_ds.map(make_tokenize_fn(tokenizer, args.max_seq_length,
+                                             template=args.prompt_template),
                             remove_columns=train_ds.column_names)
     print(f"Tokenized {len(train_ds)} training examples "
           f"(seq length <= {args.max_seq_length})")
@@ -261,7 +270,8 @@ def main() -> None:
             raise SystemExit(f"error: eval split not found: {eval_path} "
                              f"(run src/prepare_data.py, or set --eval-split)")
         eval_ds = load_from_disk(str(eval_path))
-        eval_ds = eval_ds.map(make_tokenize_fn(tokenizer, args.max_seq_length),
+        eval_ds = eval_ds.map(make_tokenize_fn(tokenizer, args.max_seq_length,
+                                               template=args.prompt_template),
                               remove_columns=eval_ds.column_names)
         print(f"Tokenized {len(eval_ds)} held-out examples from "
               f"{args.data_dir}/{args.eval_split} for early stopping "
