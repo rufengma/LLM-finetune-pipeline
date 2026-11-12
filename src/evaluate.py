@@ -139,6 +139,40 @@ def md_escape(text: str, limit: int = 600) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
+def build_results_header(ts: str, model_id: str, adapter_dir: str,
+                         base_nll: float, base_ppl: float,
+                         tuned_nll: float, tuned_ppl: float) -> str:
+    """Markdown header written at the top of eval/results.md.
+
+    Pure function (no model/tokenizer) so it is unit-testable. The reading
+    note matters because the file is a single-run snapshot: the perplexity
+    table and the samples below all come from the model and adapter named
+    in the header line, and the ROUGE table only appears when the run used
+    ``--rouge`` -- a snapshot without it is not missing data.
+    """
+    return "\n".join([
+        "# Evaluation Results",
+        "",
+        f"_Generated: {ts} · base model: `{model_id}` · adapter: `{adapter_dir}`_",
+        "",
+        "> How to read this report: one snapshot of a single eval run -- the "
+        "perplexity table and the samples below all come from the model and "
+        "adapter named above. Generations use greedy decoding, so repetition "
+        "is expected from a small base model after a short run. The ROUGE "
+        "table appears only when this run used `--rouge`.",
+        "",
+        "## Held-out perplexity (response tokens only)",
+        "",
+        "| Model | Mean NLL | Perplexity |",
+        "|-------|----------|------------|",
+        f"| Base | {base_nll:.4f} | {base_ppl:.2f} |",
+        f"| LoRA-tuned | {tuned_nll:.4f} | {tuned_ppl:.2f} |",
+        "",
+        "## Sample generations (greedy decoding)",
+        "",
+    ])
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
@@ -181,21 +215,8 @@ def main() -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     results_path = out_dir / "results.md"
     with open(results_path, "w", encoding="utf-8") as f:
-        f.write("\n".join([
-            "# Evaluation Results",
-            "",
-            f"_Generated: {ts} · base model: `{args.model_id}` · adapter: `{args.adapter_dir}`_",
-            "",
-            "## Held-out perplexity (response tokens only)",
-            "",
-            "| Model | Mean NLL | Perplexity |",
-            "|-------|----------|------------|",
-            f"| Base | {base_nll:.4f} | {base_ppl:.2f} |",
-            f"| LoRA-tuned | {tuned_nll:.4f} | {tuned_ppl:.2f} |",
-            "",
-            "## Sample generations (greedy decoding)",
-            "",
-        ]))
+        f.write(build_results_header(ts, args.model_id, args.adapter_dir,
+                                     base_nll, base_ppl, tuned_nll, tuned_ppl))
 
     # --- 2. Side-by-side generations ---
     samples = []

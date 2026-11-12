@@ -1,10 +1,11 @@
 """Tests for the offline-testable helpers in src/evaluate.py.
 
 ``src/evaluate.py`` imports torch, datasets, peft and transformers at module
-level, but the helpers covered here (``md_escape``, ``judge_pairwise``,
-``run_judge``) never touch a model. Heavy deps are stubbed with MagicMock so
-the suite runs on a plain interpreter -- no torch/GPU required, and the judge
-path is exercised with a scripted fake OpenAI client instead of a real API.
+level, but the helpers covered here (``md_escape``,
+``build_results_header``, ``judge_pairwise``, ``run_judge``) never touch a
+model. Heavy deps are stubbed with MagicMock so the suite runs on a plain
+interpreter -- no torch/GPU required, and the judge path is exercised with a
+scripted fake OpenAI client instead of a real API.
 
 ``heldout_loss`` / ``generate`` / ``main`` intentionally stay out of scope:
 they need a real model, tokenizer and held-out dataset.
@@ -23,7 +24,7 @@ import pytest
 for _mod in ("torch", "numpy", "datasets", "peft", "transformers"):
     sys.modules.setdefault(_mod, MagicMock())
 
-from src.evaluate import judge_pairwise, md_escape, run_judge  # noqa: E402
+from src.evaluate import build_results_header, judge_pairwise, md_escape, run_judge  # noqa: E402
 
 
 # --- Fake OpenAI client ---------------------------------------------------
@@ -98,6 +99,38 @@ class TestMdEscape:
         # A pipe counts as two chars after escaping, so truncation can cut
         # inside the escaped form -- the function truncates, not re-escapes.
         assert md_escape("a|b", limit=2) == "a\\…"
+
+
+# --- build_results_header -------------------------------------------------
+
+def _header():
+    return build_results_header("2026-11-12 15:00 UTC", "gpt2",
+                                "outputs/smoke-test",
+                                3.6752, 39.46, 3.4998, 33.11)
+
+
+class TestBuildResultsHeader:
+    def test_names_model_adapter_and_timestamp(self):
+        out = _header()
+        assert out.startswith("# Evaluation Results\n")
+        assert "2026-11-12 15:00 UTC" in out
+        assert "`gpt2`" in out
+        assert "`outputs/smoke-test`" in out
+
+    def test_perplexity_table_values(self):
+        out = _header()
+        assert "| Base | 3.6752 | 39.46 |" in out
+        assert "| LoRA-tuned | 3.4998 | 33.11 |" in out
+        assert "## Held-out perplexity (response tokens only)" in out
+
+    def test_reading_note_explains_snapshot_and_rouge(self):
+        out = _header()
+        assert "single eval run" in out
+        assert "--rouge" in out
+        assert "greedy decoding" in out
+
+    def test_ends_with_sample_generations_section(self):
+        assert _header().endswith("## Sample generations (greedy decoding)\n")
 
 
 # --- judge_pairwise -------------------------------------------------------
