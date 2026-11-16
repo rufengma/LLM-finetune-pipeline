@@ -31,5 +31,11 @@ bitsandbytes>=0.43.0
 # you pass --wandb-project.
 wandb>=0.17.0
 
+# Optional: HTTP inference server (src/serve.py). fastapi/uvicorn are
+# imported only by serve.py, so the training/eval scripts work without them.
+fastapi>=0.115.0
+uvicorn>=0.30.0
+
 # Dev / tests
 pytest>=8.0.0  # run the suite with: pytest tests/ -q
+httpx>=0.27.0  # TestClient for tests/test_serve.py

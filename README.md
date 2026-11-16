@@ -30,6 +30,7 @@ flowchart TB
     DPO["src/train_dpo.py<br/>merge SFT → base + preferences<br/>fresh DPO LoRA vs frozen ref"]:::model
     DPOOut["outputs/&lt;run-name&gt;-dpo/"]:::store
     Infer["src/inference.py<br/>single-prompt / interactive CLI"]:::output
+    Serve["src/serve.py<br/>FastAPI: GET /health + POST /generate"]:::output
     Eval["src/evaluate.py<br/>held-out perplexity<br/>side-by-side + LLM-as-judge"]:::output
     Results["eval/results.md<br/>base vs tuned report"]:::output
 
@@ -41,9 +42,11 @@ flowchart TB
     SFT --> SFTOut
     SFTOut --> DPO
     SFTOut --> Infer
+    SFTOut --> Serve
     SFTOut --> Eval
     DPO --> DPOOut
     DPOOut -.-> Infer
+    DPOOut -.-> Serve
     DPOOut -.-> Eval
     TestSet --> Eval
     Eval --> Results
@@ -68,7 +71,8 @@ llm-finetune-pipeline/
 │   ├── train_dpo.py     # DPO preference-tuning follow-up (trl DPOTrainer)
 │   ├── evaluate.py      # base vs tuned: perplexity, samples, LLM-as-judge, ROUGE
 │   ├── rouge.py         # dependency-free ROUGE-1/2/L for the summary subset
-│   └── inference.py     # single-prompt / interactive generation CLI
+│   ├── inference.py     # single-prompt / interactive generation CLI
+│   └── serve.py         # FastAPI server: GET /health + POST /generate
 ├── tests/               # pytest suite (runs offline, heavy deps stubbed)
 ├── configs/
 │   ├── recommended.yaml # reference config for a real (GPU) training run
@@ -157,6 +161,14 @@ python src/evaluate.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
 python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test \
     --prompt "Explain what a REST API is."
 python src/inference.py --model-id gpt2 --adapter-dir outputs/smoke-test --interactive
+
+# 5b. Or serve it over HTTP (needs `pip install fastapi uvicorn`).
+#     The model loads once at startup; per-request overrides for
+#     max_new_tokens / temperature / top_p / prompt_template are accepted.
+python src/serve.py --model-id gpt2 --adapter-dir outputs/smoke-test
+curl -X POST localhost:8000/generate -H 'Content-Type: application/json' \
+    -d '{"instruction": "Explain what a REST API is.", "temperature": 0}'
+curl localhost:8000/health
 ```
 
 ## Continuous integration
