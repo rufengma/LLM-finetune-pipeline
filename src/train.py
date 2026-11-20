@@ -89,6 +89,20 @@ def parse_args() -> argparse.Namespace:
                    help="Evaluate every N steps when training with "
                         "--max-steps (default: max_steps // 5). With "
                         "--num-epochs, evaluation happens once per epoch.")
+    # Resuming
+    p.add_argument("--resume-from-checkpoint", default=None, metavar="PATH",
+                   help="Resume training from a Trainer checkpoint directory "
+                        "created by an earlier run of this script "
+                        "(checkpoint-* under --output-dir): restores the "
+                        "LoRA adapter, optimizer, scheduler and RNG state, "
+                        "and continues from the checkpoint's step. Pass "
+                        "'latest' to pick the highest-step checkpoint under "
+                        "--output-dir, or a path (absolute, or relative to "
+                        "the repo root / --output-dir). Use the same "
+                        "--model-id and LoRA settings as the original run. "
+                        "Note --max-steps is a total step budget, not "
+                        "additional steps: to add 10 steps to a "
+                        "checkpoint-10 run, pass --max-steps 20.")
     # Optimization
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--num-epochs", type=float, default=3)
@@ -102,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bf16", action="store_true", help="Use bf16 (Ampere+ GPUs)")
     p.add_argument("--fp16", action="store_true", help="Use fp16")
     p.add_argument("--gradient-checkpointing", action="store_true",
-                   help="Trade ~20-30% extra compute for much lower activation "
+                   help="Trade ~20-30%% extra compute for much lower activation "
                         "memory (recompute activations in backprop); use for "
                         "long sequences or larger models on limited VRAM")
     p.add_argument("--device-map", default="auto")
@@ -208,11 +222,62 @@ def build_eval_kwargs(args) -> dict:
     }
 
 
+def resolve_checkpoint(resume_from: str | None, output_dir: Path) -> str | None:
+    """Resolve --resume-from-checkpoint to a checkpoint directory path.
+
+    Pure function of its inputs (filesystem reads only), so it is easy to
+    unit-test without the training stack.
+
+    - None -> None (fresh run).
+    - "latest" -> the highest-step checkpoint-* directory under output_dir
+      that contains trainer_state.json (i.e. a real Trainer checkpoint).
+    - anything else -> that path itself, or output_dir / <value> when the
+      bare value does not exist (so `checkpoint-10` works from the repo
+      root). Must be a directory containing trainer_state.json.
+
+    Raises SystemExit with a clear message when nothing valid is found,
+    instead of letting Trainer fail mid-run with a cryptic error.
+    """
+    if resume_from is None:
+        return None
+    if resume_from == "latest":
+        candidates = [d for d in output_dir.glob("checkpoint-*")
+                      if d.is_dir() and (d / "trainer_state.json").is_file()]
+
+        def _step(d: Path) -> int:
+            try:
+                return int(d.name.split("-", 1)[1])
+            except (IndexError, ValueError):
+                return -1
+
+        if not candidates:
+            raise SystemExit(
+                f"error: --resume-from-checkpoint latest: no checkpoint "
+                f"found under {output_dir} (looked for checkpoint-*/ "
+                f"trainer_state.json)")
+        return str(max(candidates, key=_step))
+    path = Path(resume_from)
+    if not path.exists():
+        alt = output_dir / resume_from
+        path = alt if alt.exists() else path
+    if not path.is_dir() or not (path / "trainer_state.json").is_file():
+        raise SystemExit(
+            f"error: --resume-from-checkpoint {resume_from}: not a valid "
+            f"Trainer checkpoint directory (expected "
+            f"{path}/trainer_state.json)")
+    return str(path)
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve (and validate) the resume target before loading any model, so
+    # a bad path fails fast instead of after minutes of setup.
+    resume_from = resolve_checkpoint(args.resume_from_checkpoint, out_dir)
+    if resume_from:
+        print(f"Resuming training from checkpoint: {resume_from}")
 
     # --- Tokenizer & model ---
     tokenizer = ensure_pad_token(AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True))
@@ -329,7 +394,7 @@ def main() -> None:
         data_collator=make_collate_fn(tokenizer),
         callbacks=callbacks,
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from)
 
     # --- Save adapter + tokenizer + run config ---
     model.save_pretrained(str(out_dir))
