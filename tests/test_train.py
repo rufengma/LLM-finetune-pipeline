@@ -19,7 +19,7 @@ import pytest
 for _mod in ("torch", "numpy", "datasets", "peft", "transformers"):
     sys.modules.setdefault(_mod, MagicMock())
 
-from src.train import build_eval_kwargs, parse_args  # noqa: E402
+from src.train import build_eval_kwargs, parse_args, resolve_checkpoint  # noqa: E402
 
 
 def _parse(monkeypatch, argv):
@@ -138,3 +138,88 @@ class TestPromptTemplateArgs:
         args = _parse(monkeypatch, ["--config", str(cfg),
                                     "--prompt-template", "alpaca"])
         assert args.prompt_template == "alpaca"
+
+
+def _fake_checkpoint(parent, name, with_state=True):
+    d = parent / name
+    d.mkdir(parents=True)
+    if with_state:
+        (d / "trainer_state.json").write_text('{"global_step": 10}')
+    return d
+
+
+class TestResolveCheckpoint:
+    def test_none_means_fresh_run(self, tmp_path):
+        assert resolve_checkpoint(None, tmp_path) is None
+
+    def test_latest_picks_highest_step(self, tmp_path):
+        _fake_checkpoint(tmp_path, "checkpoint-5")
+        _fake_checkpoint(tmp_path, "checkpoint-10")
+        _fake_checkpoint(tmp_path, "checkpoint-3")
+        assert resolve_checkpoint("latest", tmp_path) == str(tmp_path / "checkpoint-10")
+
+    def test_latest_ignores_dirs_without_trainer_state(self, tmp_path):
+        _fake_checkpoint(tmp_path, "checkpoint-5")
+        _fake_checkpoint(tmp_path, "checkpoint-99", with_state=False)
+        assert resolve_checkpoint("latest", tmp_path) == str(tmp_path / "checkpoint-5")
+
+    def test_latest_with_no_checkpoints_errors(self, tmp_path):
+        with pytest.raises(SystemExit):
+            resolve_checkpoint("latest", tmp_path)
+
+    def test_latest_with_only_invalid_dirs_errors(self, tmp_path):
+        _fake_checkpoint(tmp_path, "checkpoint-7", with_state=False)
+        with pytest.raises(SystemExit):
+            resolve_checkpoint("latest", tmp_path)
+
+    def test_explicit_existing_path_returned_as_given(self, tmp_path):
+        ckpt = _fake_checkpoint(tmp_path, "checkpoint-10")
+        assert resolve_checkpoint(str(ckpt), tmp_path) == str(ckpt)
+
+    def test_bare_name_resolves_under_output_dir(self, tmp_path):
+        _fake_checkpoint(tmp_path, "checkpoint-10")
+        assert resolve_checkpoint("checkpoint-10", tmp_path) == str(tmp_path / "checkpoint-10")
+
+    def test_missing_path_errors(self, tmp_path):
+        with pytest.raises(SystemExit):
+            resolve_checkpoint("checkpoint-42", tmp_path)
+
+    def test_dir_without_trainer_state_errors(self, tmp_path):
+        _fake_checkpoint(tmp_path, "checkpoint-10", with_state=False)
+        with pytest.raises(SystemExit):
+            resolve_checkpoint(str(tmp_path / "checkpoint-10"), tmp_path)
+
+    def test_plain_file_errors(self, tmp_path):
+        f = tmp_path / "not-a-checkpoint"
+        f.write_text("nope")
+        with pytest.raises(SystemExit):
+            resolve_checkpoint(str(f), tmp_path)
+
+
+class TestResumeFromCheckpointArgs:
+    def test_defaults_to_none(self, monkeypatch):
+        args = _parse(monkeypatch, [])
+        assert args.resume_from_checkpoint is None
+
+    def test_explicit_path_is_parsed(self, monkeypatch):
+        args = _parse(monkeypatch, ["--resume-from-checkpoint",
+                                    "outputs/run/checkpoint-10"])
+        assert args.resume_from_checkpoint == "outputs/run/checkpoint-10"
+
+    def test_latest_keyword_is_parsed(self, monkeypatch):
+        args = _parse(monkeypatch, ["--resume-from-checkpoint", "latest"])
+        assert args.resume_from_checkpoint == "latest"
+
+    def test_yaml_config_accepts_the_key(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "resume.yaml"
+        cfg.write_text("resume_from_checkpoint: latest\n")
+        args = _parse(monkeypatch, ["--config", str(cfg)])
+        assert args.resume_from_checkpoint == "latest"
+
+    def test_cli_flag_overrides_yaml(self, monkeypatch, tmp_path):
+        cfg = tmp_path / "resume.yaml"
+        cfg.write_text("resume_from_checkpoint: latest\n")
+        args = _parse(monkeypatch, ["--config", str(cfg),
+                                    "--resume-from-checkpoint",
+                                    "outputs/run/checkpoint-20"])
+        assert args.resume_from_checkpoint == "outputs/run/checkpoint-20"
