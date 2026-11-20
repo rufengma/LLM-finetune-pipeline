@@ -120,6 +120,13 @@ The bundled 80 seed tasks all pass the defaults (80 kept, 0 dropped).
 python src/train.py --model-id gpt2 --max-steps 10 --batch-size 2 \
     --max-seq-length 256 --output-dir outputs/smoke-test
 
+# 3a'. Resume an interrupted run: re-run with a higher --max-steps and
+#     --resume-from-checkpoint latest (restores the adapter, optimizer,
+#     scheduler and RNG state from the newest checkpoint under --output-dir).
+python src/train.py --model-id gpt2 --max-steps 20 --batch-size 2 \
+    --max-seq-length 256 --output-dir outputs/smoke-test \
+    --resume-from-checkpoint latest
+
 # 3b. Real run (single ~16GB GPU)
 python src/train.py --model-id Qwen/Qwen2.5-1.5B-Instruct \
     --num-epochs 3 --batch-size 2 --grad-accum 8 --lr 2e-4 --bf16 \
@@ -249,6 +256,22 @@ the gpt2 weights are cached between runs.
   checkpoint to fall back to. Use it when training loss keeps dropping but
   you suspect memorization; on tiny held-out sets a patience of 2–3 is
   usually enough since eval noise is high.
+- **Resuming an interrupted run.** `--resume-from-checkpoint PATH` (only in
+  `src/train.py`) continues training from a `checkpoint-*` directory written
+  by an earlier run of the same script: the Trainer restores the LoRA
+  adapter weights, optimizer, scheduler and RNG state, so the run continues
+  from the checkpoint's step instead of starting over. Pass `latest` to
+  pick the highest-step checkpoint under `--output-dir`, or a path
+  (absolute, or relative to the repo root / `--output-dir`, so
+  `checkpoint-10` works). Reuse the same `--model-id` and LoRA settings as
+  the original run — a mismatched adapter shape fails the load. Note
+  `--max-steps` is a *total* step budget, not additional steps: to add 10
+  steps to a `checkpoint-10` run, pass `--max-steps 20`. Checkpoints are
+  written at the save cadence (`save_steps`, one per epoch for
+  `--num-epochs` runs) and `save_total_limit=2` keeps only the last two,
+  so resume promptly after a crash. A missing or invalid target fails fast
+  with a clear error before any model is loaded. Also available as
+  `resume_from_checkpoint:` in a `--config` YAML.
 - **QLoRA / quantization.** `--load-in-4bit` loads the base model in 4-bit
   NF4 (with nested/double quantization, `--bnb-4bit-double-quant` on by
   default) via bitsandbytes, then trains LoRA adapters on the frozen
