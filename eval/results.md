@@ -10,6 +10,20 @@ _Generated: 2026-09-22 16:30 UTC · base model: `gpt2` · adapter: `outputs/smok
 | LoRA-tuned | 3.4998 | 33.11 |
 
 ## Sample generations (greedy decoding)
+
+> Gallery: one row per sample — word count plus a repetition flag (“repeats … ×N” means one sentence appears N times in the greedy continuation). Full side-by-side outputs follow below.
+
+| Sample | Instruction | Base | LoRA-tuned |
+|---|---|---|---|
+| [1](#sample-1) | Write a short apology email for missing a deadline. | 51 words · repeats “I am sorry for the inconvenience.” ×8 | 51 words · repeats “I am sorry for the inconvenience.” ×8 |
+| [2](#sample-2) | What is gradient descent in one paragraph? | 45 words | 54 words |
+| [3](#sample-3) | What are the key sections of a good resume for a software en… | 46 words | 46 words |
+| [4](#sample-4) | List three differences between TCP and UDP. | 57 words · repeats “It is used to communicate with other …” ×4 | 57 words · repeats “It is used to communicate with other …” ×4 |
+| [5](#sample-5) | Write a checklist for launching a personal blog. | 43 words | 25 words |
+| [6](#sample-6) | What is the main idea of this paragraph?<br>Input: Urban tre… | 52 words | 54 words |
+| [7](#sample-7) | Summarize the following paragraph in one sentence.<br>Input:… | 48 words | 49 words |
+| [8](#sample-8) | What is the difference between authentication and authorizat… | 46 words · repeats “Authorization is the process of authe…” ×3 | 48 words |
+
 ### Sample 1
 
 **Instruction:** Write a short apology email for missing a deadline.

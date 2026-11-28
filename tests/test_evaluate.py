@@ -24,7 +24,9 @@ import pytest
 for _mod in ("torch", "numpy", "datasets", "peft", "transformers"):
     sys.modules.setdefault(_mod, MagicMock())
 
-from src.evaluate import build_results_header, judge_pairwise, md_escape, run_judge  # noqa: E402
+from src.evaluate import (build_gallery_table, build_results_header,
+                          gallery_cell, judge_pairwise, md_escape,
+                          most_repeated_sentence, run_judge)  # noqa: E402
 
 
 # --- Fake OpenAI client ---------------------------------------------------
@@ -99,6 +101,98 @@ class TestMdEscape:
         # A pipe counts as two chars after escaping, so truncation can cut
         # inside the escaped form -- the function truncates, not re-escapes.
         assert md_escape("a|b", limit=2) == "a\\…"
+
+
+# --- gallery helpers ------------------------------------------------------
+
+LOOP = ("I am sorry for the inconvenience. " * 8).strip()
+
+
+class TestMostRepeatedSentence:
+    def test_detects_a_sentence_loop(self):
+        assert most_repeated_sentence(LOOP) == (
+            "I am sorry for the inconvenience.", 8)
+
+    def test_below_threshold_returns_none(self):
+        text = "Same sentence here. Same sentence here. Something else."
+        assert most_repeated_sentence(text) is None
+
+    def test_exactly_at_threshold_counts(self):
+        text = "Echo. Echo. Echo."
+        assert most_repeated_sentence(text) == ("Echo.", 3)
+
+    def test_matching_is_case_insensitive_and_whitespace_collapsed(self):
+        text = "Hello  world. HELLO WORLD. hello world."
+        assert most_repeated_sentence(text) == ("Hello world.", 3)
+
+    def test_newline_separated_repeats_count(self):
+        text = "First line.\nSecond line.\nSecond line.\nSecond line."
+        assert most_repeated_sentence(text) == ("Second line.", 3)
+
+    def test_picks_the_most_repeated_sentence(self):
+        text = ("Alpha. Beta. Alpha. Beta. Alpha. Gamma. Gamma. Gamma. Gamma.")
+        assert most_repeated_sentence(text) == ("Gamma.", 4)
+
+    def test_empty_and_single_sentence_return_none(self):
+        assert most_repeated_sentence("") is None
+        assert most_repeated_sentence("Just one sentence.") is None
+
+    def test_fragments_without_terminal_punctuation_still_split_on_newlines(self):
+        text = "### Response:\n### Response:\n### Response:\nDone."
+        assert most_repeated_sentence(text) == ("### Response:", 3)
+
+
+class TestGalleryCell:
+    def test_plain_output_is_just_word_count(self):
+        assert gallery_cell("One two three four.") == "4 words"
+
+    def test_looping_output_gets_repetition_flag(self):
+        assert gallery_cell(LOOP) == (
+            '48 words · repeats “I am sorry for the inconvenience.” ×8')
+
+    def test_long_repeated_sentence_is_truncated(self):
+        text = ("The gradient descent algorithm is a simple, but powerful, "
+                "way to learn. ") * 3
+        out = gallery_cell(text)
+        assert out.startswith("36 words · repeats “The gradient descent algorithm is a s…")
+        assert out.endswith("×3")
+
+    def test_empty_output(self):
+        assert gallery_cell("") == "0 words"
+
+
+class TestBuildGalleryTable:
+    def _samples(self):
+        return [
+            _make_sample(instruction="Write a short apology email",
+                         base=LOOP, tuned="Dear Ana, sorry about the delay."),
+            _make_sample(instruction="What is gradient descent?",
+                         base="The following is a response.",
+                         tuned="Gradient descent steps downhill."),
+        ]
+
+    def test_has_intro_and_header_rows(self):
+        out = build_gallery_table(self._samples())
+        assert out.startswith("> Gallery: one row per sample")
+        assert "| Sample | Instruction | Base | LoRA-tuned |" in out
+
+    def test_one_row_per_sample_with_anchor_links(self):
+        out = build_gallery_table(self._samples())
+        assert "| [1](#sample-1) | Write a short apology email |" in out
+        assert "| [2](#sample-2) | What is gradient descent? |" in out
+        assert "48 words · repeats" in out
+        assert "6 words" in out  # tuned sample 1: "Dear Ana, sorry about the delay."
+        assert "5 words" in out  # base sample 2: "The following is a response."
+
+    def test_long_instruction_is_truncated(self):
+        sample = _make_sample(instruction="x" * 100, base="b", tuned="t")
+        out = build_gallery_table([sample])
+        assert "x" * 60 + "…" in out
+
+    def test_empty_samples_is_just_intro_and_header(self):
+        out = build_gallery_table([])
+        assert "| Sample | Instruction | Base | LoRA-tuned |" in out
+        assert "[1](#sample-1)" not in out
 
 
 # --- build_results_header -------------------------------------------------

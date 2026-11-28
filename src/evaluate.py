@@ -15,6 +15,7 @@ Usage:
 import argparse
 import math
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -139,6 +140,79 @@ def md_escape(text: str, limit: int = 600) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def most_repeated_sentence(text: str, min_count: int = 3) -> tuple | None:
+    """Most-repeated sentence in ``text``, or None if no sentence repeats.
+
+    Sentences are split on sentence-ending punctuation or newlines and
+    compared case-insensitively with collapsed whitespace. Only counts
+    ``min_count`` or more; a sentence that appears once or twice is normal
+    prose, three-plus is the greedy-decoding loop this gallery flags.
+    """
+    counts: dict[str, int] = {}
+    first_seen: dict[str, str] = {}
+    for raw in _SENTENCE_SPLIT.split(text):
+        sentence = " ".join(raw.split())
+        if not sentence:
+            continue
+        key = sentence.lower()
+        counts[key] = counts.get(key, 0) + 1
+        first_seen.setdefault(key, sentence)
+    best_key, best_count = None, 0
+    for key, count in counts.items():
+        if count >= min_count and count > best_count:
+            best_key, best_count = key, count
+    if best_key is None:
+        return None
+    return first_seen[best_key], best_count
+
+
+def gallery_cell(text: str) -> str:
+    """One-line summary of a generation for the gallery overview.
+
+    Word count plus a repetition flag, e.g.
+    ``38 words · repeats "I am sorry for the inconvenience." ×8``.
+    The flag names the most visible failure mode of greedy decoding from
+    a small model after a short run instead of hiding it.
+    """
+    words = len(text.split())
+    rep = most_repeated_sentence(text)
+    if rep is None:
+        return f"{words} words"
+    sentence, count = rep
+    short = sentence if len(sentence) <= 40 else sentence[:37] + "…"
+    return f"{words} words · repeats “{short}” ×{count}"
+
+
+def build_gallery_table(samples: list) -> str:
+    """At-a-glance overview of the sample generations for eval/results.md.
+
+    Pure function (no model) so it is unit-testable. One row per sample:
+    the instruction plus a one-line summary of each side's output. The
+    full side-by-side outputs follow below; this table exists so a reader
+    can see at a glance which samples actually differ and where greedy
+    decoding looped, without wading through every long table first.
+    """
+    lines = [
+        "> Gallery: one row per sample — word count plus a repetition flag "
+        "(“repeats … ×N” means one sentence appears N times in the greedy "
+        "continuation). Full side-by-side outputs follow below.",
+        "",
+        "| Sample | Instruction | Base | LoRA-tuned |",
+        "|---|---|---|---|",
+    ]
+    for i, sample in enumerate(samples, 1):
+        lines.append(
+            f"| [{i}](#sample-{i}) | {md_escape(sample['instruction'], 60)} | "
+            f"{md_escape(gallery_cell(sample['base']))} | "
+            f"{md_escape(gallery_cell(sample['tuned']))} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_results_header(ts: str, model_id: str, adapter_dir: str,
                          base_nll: float, base_ppl: float,
                          tuned_nll: float, tuned_ppl: float) -> str:
@@ -158,7 +232,9 @@ def build_results_header(ts: str, model_id: str, adapter_dir: str,
         "> How to read this report: one snapshot of a single eval run -- the "
         "perplexity table and the samples below all come from the model and "
         "adapter named above. Generations use greedy decoding, so repetition "
-        "is expected from a small base model after a short run. The ROUGE "
+        "is expected from a small base model after a short run; the gallery "
+        "table at the top of the sample section flags word counts and "
+        "sentence repetition per sample. The ROUGE "
         "table appears only when this run used `--rouge`.",
         "",
         "## Held-out perplexity (response tokens only)",
@@ -212,6 +288,9 @@ def main() -> None:
     print(f"Held-out PPL  | base: {base_ppl:.2f} | tuned: {tuned_ppl:.2f}")
 
     # --- Write results.md incrementally (survives interruptions) ---
+    # The header (perplexity) is written before generation; the sample
+    # section is written in one go after generation because the gallery
+    # overview table needs all samples up front.
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     results_path = out_dir / "results.md"
     with open(results_path, "w", encoding="utf-8") as f:
@@ -231,7 +310,10 @@ def main() -> None:
         }
         samples.append(sample)
         print(f"  generated {len(samples)}/{args.num_samples} samples")
-        with open(results_path, "a", encoding="utf-8") as f:
+
+    with open(results_path, "a", encoding="utf-8") as f:
+        f.write(build_gallery_table(samples))
+        for i, sample in enumerate(samples, 1):
             f.write("\n".join([
                 f"### Sample {i}",
                 "",

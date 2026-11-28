@@ -307,6 +307,20 @@ the gpt2 weights are cached between runs.
 | Held-out perplexity | 39.46 | 33.11 | −16.1% |
 
 Sample side-by-side generations are in [`eval/results.md`](eval/results.md).
+It opens with a gallery table — one row per sample with word counts and a
+repetition flag (`repeats … ×N` means one sentence appears N times in the
+greedy continuation), so you can see at a glance which samples actually
+differ before reading the full outputs. The table is written by
+`evaluate.py` (`build_gallery_table` in `src/evaluate.py`), so it is
+regenerated with every eval run.
+
+**Reading the smoke-test gallery honestly:** on this 10-step run the tuned
+model is clearly better on 2 of 8 samples (gradient-descent definition,
+photosynthesis summary — the base model rambles off-topic in both), slightly
+better on 1 (resume sections), about even on 4 (both sides loop the same
+sentence in the apology-email and TCP-vs-UDP samples), and worse on 1 (urban
+trees — the tuned model invents "The Urban Tree Project"). Repetition loops
+dominate both sides; don't over-read a smoke adapter.
 
 **What to expect from a real run** (Qwen2.5-1.5B, 3 epochs, lr 2e-4, per the
 recommended config): held-out perplexity should drop noticeably versus the
